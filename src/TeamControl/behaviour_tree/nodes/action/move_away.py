@@ -5,17 +5,16 @@ import py_trees
 
 
 class MoveAwayRobot(py_trees.behaviour.Behaviour):
-    def __init__(self, robot_id: int, ball, distance=150):
+    def __init__(self, robot_id: int, distance=150):
         name = "MoveAwayRobot" + str(robot_id)
         super(MoveAwayRobot, self).__init__(name=name)
         self.bb = py_trees.blackboard.Client(name=name)
         self.robot_id = robot_id
-        self.ball = ball
         self.distance = distance
 
     def update(self, dt: float) -> py_trees.common.Status:
         robot_pos = self.bb.get_variable(f"robot_pos_{self.robot_id}")
-        ball_pos = self.bb.get_variable(f"ball_pos")
+        ball_pos = self.bb.get_variable("ball_pos")
         target_pos = move_away_robot_from(robot_pos, ball_pos, self.distance)
         self.bb.set_variable(f"target_pos_{self.robot_id}", target_pos)
         self.bb.set_variable(f"Intent{self.robot_id}", "GOTO")
