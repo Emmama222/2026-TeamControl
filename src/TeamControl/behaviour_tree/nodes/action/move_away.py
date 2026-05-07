@@ -1,6 +1,23 @@
 import numpy as np
+import py_trees
+# default rule threshould 150
 
-from .velocity import go_to_target
+class MoveAwayRobot(py_trees.behaviour.Behaviour):
+    def __init__(self, robot_id:int, ball, threshold=150):
+		name = "MoveAwayRobot" + str(robot_id)
+		super(MoveAwayRobot, self).__init__(name=name)
+		self.bb = py_trees.blackboard.Client(name=name)
+		self.robot_id = robot_id
+		self.ball = ball
+		self.threshold = threshold
+
+
+	def update(self, dt: float) -> py_trees.common.Status:
+		robot_pos = self.bb.get_variable(f"robot_pos_{self.robot_id}")
+        ball_pos = self.bb.get_variable(f"ball_pos")
+        target_pos = move_away_robot_from(robot_pos, ball_pos, self.threshold)
+        self.bb.set_variable(f"target_pos_{self.robot_id}", target_pos)
+        self.bb.set_variable(f"Intent{self.robot_id}", "GOTO")
 
 
 def move_away_robot_from(robot_pos, target_pos, threshold=150):
@@ -28,5 +45,4 @@ if __name__ == "__main__":
     robot_pos = np.array([0, 100, 0])
     target_pos = np.array([50, 100])
     new_pos = move_away_robot_from(robot_pos, target_pos, threshold=150)
-    vx, vy = go_to_target(robot_pos, new_pos)
-    print(new_pos, vx, vy)
+    print(new_pos)

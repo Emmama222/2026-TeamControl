@@ -6,14 +6,15 @@ one-touch shooting, and pressure awareness.
 
 import math
 import time
+
 import py_trees
+
+from TeamControl.robot.constants import MAX_W, TURN_GAIN
 from TeamControl.robot.Movement import RobotMovement
 from TeamControl.robot.path_planner import move_toward_relative, turn_toward
 from TeamControl.world.transform_cords import world2robot
 
-from TeamControl.robot.constants import MAX_W, TURN_GAIN
-
-from .common_trees import GetWorldPositionUpdate, GetRobotIDPosition, SendRobotCommand
+from .common_trees import GetRobotIDPosition, GetWorldPositionUpdate, SendRobotCommand
 
 FIELD_LENGTH = 9000
 GOAL_WIDTH = 1000
@@ -34,7 +35,7 @@ KICK_COOLDOWN_S = 5.0
 STOP_RADIUS = 35
 RAMP_DIST = 350
 MIN_CHARGE_VX = 0.4
-FORCE_KICK_TIME = 0.6    # if near ball this long without kicking, just fire
+FORCE_KICK_TIME = 0.6  # if near ball this long without kicking, just fire
 
 # Ball velocity
 BALL_HISTORY_SIZE = 6
@@ -70,7 +71,7 @@ class CalculateStrikerAction(py_trees.behaviour.Behaviour):
         self.last_kick_time = 0.0
         self.ball_history = []
         self.last_ball_xy = None
-        self.near_ball_since = 0.0   # when we first got close to ball
+        self.near_ball_since = 0.0  # when we first got close to ball
 
     def setup(self, **kwargs):
         self.bb.register_key(key="robot_pos", access=py_trees.common.Access.READ)
@@ -98,8 +99,11 @@ class CalculateStrikerAction(py_trees.behaviour.Behaviour):
 
         # ── Ball velocity tracking ────────────────────────────
         now = time.time()
-        if (self.last_ball_xy is None or
-                ball[0] != self.last_ball_xy[0] or ball[1] != self.last_ball_xy[1]):
+        if (
+            self.last_ball_xy is None
+            or ball[0] != self.last_ball_xy[0]
+            or ball[1] != self.last_ball_xy[1]
+        ):
             self.ball_history.append((now, ball[0], ball[1]))
             if len(self.ball_history) > BALL_HISTORY_SIZE:
                 self.ball_history.pop(0)
@@ -117,7 +121,9 @@ class CalculateStrikerAction(py_trees.behaviour.Behaviour):
         if ball_speed > 200:
             # Find optimal intercept using friction model
             best_pt = ball
-            best_t = math.hypot(rpos[0] - ball[0], rpos[1] - ball[1]) / (SPRINT_SPEED * 1000)
+            best_t = math.hypot(rpos[0] - ball[0], rpos[1] - ball[1]) / (
+                SPRINT_SPEED * 1000
+            )
             for i in range(1, 10):
                 pdt = i * 0.1
                 px, py = _predict_ball_friction(ball[0], ball[1], bvx, bvy, pdt)
@@ -168,21 +174,26 @@ class CalculateStrikerAction(py_trees.behaviour.Behaviour):
         kick, dribble = 0, 0
 
         # ── One-touch: ball coming toward us ──────────────────
-        ball_toward_me = (rel_ball[0] > 0 and
-                          ball_speed > ONETOUCH_MIN_SPEED and
-                          d_ball < 600)
+        ball_toward_me = (
+            rel_ball[0] > 0 and ball_speed > ONETOUCH_MIN_SPEED and d_ball < 600
+        )
 
-        if (ball_toward_me and abs(angle_to_aim) < 0.8
-                and (now - self.last_kick_time) > KICK_COOLDOWN_S):
+        if (
+            ball_toward_me
+            and abs(angle_to_aim) < 0.8
+            and (now - self.last_kick_time) > KICK_COOLDOWN_S
+        ):
             # Intercept and redirect
             dribble = 1
             vx, vy = move_toward_relative(
-                rel_ball, ONETOUCH_SPEED,
-                stop_radius=20, ramp_dist=250,
+                rel_ball,
+                ONETOUCH_SPEED,
+                stop_radius=20,
+                ramp_dist=250,
             )
             w = turn_toward(rel_aim, epsilon=0.05, max_w=MAX_W)
 
-            if (d_ball < KICK_MM * 1.3 and abs(angle_to_aim) < ALIGN_RAD * 1.3):
+            if d_ball < KICK_MM * 1.3 and abs(angle_to_aim) < ALIGN_RAD * 1.3:
                 kick = 1
                 dribble = 0
                 self.last_kick_time = now
@@ -194,8 +205,10 @@ class CalculateStrikerAction(py_trees.behaviour.Behaviour):
             # Approach: go to behind-ball (use intercept for moving ball)
             target_rel = rel_behind if ball_speed < 300 else world2robot(rpos, behind)
             vx, vy = move_toward_relative(
-                target_rel, MOVE_SPEED if d_ball > 800 else CHARGE_SPEED,
-                stop_radius=STOP_RADIUS, ramp_dist=RAMP_DIST,
+                target_rel,
+                MOVE_SPEED if d_ball > 800 else CHARGE_SPEED,
+                stop_radius=STOP_RADIUS,
+                ramp_dist=RAMP_DIST,
             )
             # Pre-orient toward aim while approaching
             if d_ball < 600:
@@ -206,8 +219,10 @@ class CalculateStrikerAction(py_trees.behaviour.Behaviour):
             # Charge: drive to ball, face goal, dribble
             dribble = 1
             vx, vy = move_toward_relative(
-                rel_ball, CHARGE_SPEED,
-                stop_radius=15, ramp_dist=220,
+                rel_ball,
+                CHARGE_SPEED,
+                stop_radius=15,
+                ramp_dist=220,
             )
             # Always push forward while charging — prevents halting
             if vx < MIN_CHARGE_VX and d_ball > 15:
@@ -221,11 +236,17 @@ class CalculateStrikerAction(py_trees.behaviour.Behaviour):
             else:
                 self.near_ball_since = 0.0
 
-            near_ball_duration = (now - self.near_ball_since) if self.near_ball_since > 0 else 0.0
+            near_ball_duration = (
+                (now - self.near_ball_since) if self.near_ball_since > 0 else 0.0
+            )
             force_kick = near_ball_duration > FORCE_KICK_TIME
 
             if (now - self.last_kick_time) > KICK_COOLDOWN_S and (
-                (d_ball < KICK_MM and rel_ball[0] > -40 and abs(angle_to_aim) < ALIGN_RAD)
+                (
+                    d_ball < KICK_MM
+                    and rel_ball[0] > -40
+                    and abs(angle_to_aim) < ALIGN_RAD
+                )
                 or force_kick
             ):
                 kick = 1
@@ -253,12 +274,14 @@ class StrikerRunningSeq(py_trees.composites.Sequence):
         self.isYellow = isYellow
         self.isPositive = isPositive if isPositive is not None else isYellow
         self.bb = py_trees.blackboard.Client(name=name)
-        self.add_children([
-            GetWorldPositionUpdate(wm),
-            GetRobotIDPosition(robot_id),
-            CalculateStrikerAction(),
-            SendRobotCommand(dispatch_q),
-        ])
+        self.add_children(
+            [
+                GetWorldPositionUpdate(wm),
+                GetRobotIDPosition(robot_id),
+                CalculateStrikerAction(),
+                SendRobotCommand(dispatch_q),
+            ]
+        )
 
     def setup(self, **kwargs):
         self.bb.register_key(key="robot_id", access=py_trees.common.Access.WRITE)

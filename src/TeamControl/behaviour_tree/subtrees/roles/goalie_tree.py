@@ -6,13 +6,14 @@ wall-bounce prediction, smart clearing, and aggressive angle narrowing.
 
 import math
 import time
+
 import py_trees
+
+from TeamControl.robot.constants import FACE_BALL_GAIN, MAX_W
 from TeamControl.robot.path_planner import move_toward_relative, turn_toward
 from TeamControl.world.transform_cords import world2robot
 
-from TeamControl.robot.constants import MAX_W, FACE_BALL_GAIN
-
-from .common_trees import GetWorldPositionUpdate, GetRobotIDPosition, SendRobotCommand
+from .common_trees import GetRobotIDPosition, GetWorldPositionUpdate, SendRobotCommand
 
 FIELD_LENGTH = 9000
 FIELD_WIDTH = 6000
@@ -34,7 +35,7 @@ STOP_RADIUS = 30
 RAMP_DIST = 220
 
 # Shot detection
-SHOT_SPEED_THRESH = 500     # mm/s
+SHOT_SPEED_THRESH = 500  # mm/s
 BALL_HISTORY_SIZE = 7
 FRICTION = 0.4
 
@@ -89,8 +90,11 @@ class CalculateGoalieAction(py_trees.behaviour.Behaviour):
         half_goal = GOAL_HW
 
         # ── Ball velocity tracking ────────────────────────────
-        if (self.last_ball_xy is None or
-                ball[0] != self.last_ball_xy[0] or ball[1] != self.last_ball_xy[1]):
+        if (
+            self.last_ball_xy is None
+            or ball[0] != self.last_ball_xy[0]
+            or ball[1] != self.last_ball_xy[1]
+        ):
             self.ball_history.append((now, ball[0], ball[1]))
             if len(self.ball_history) > BALL_HISTORY_SIZE:
                 self.ball_history.pop(0)
@@ -105,7 +109,7 @@ class CalculateGoalieAction(py_trees.behaviour.Behaviour):
                 ball_speed = math.hypot(bvx, bvy)
 
         # ── Shot detection (direct + wall bounce) ─────────────
-        ball_toward_us = (bvx * sign > 80)
+        ball_toward_us = bvx * sign > 80
         shot_incoming = False
         pred_y = 0.0
 
@@ -139,7 +143,9 @@ class CalculateGoalieAction(py_trees.behaviour.Behaviour):
                     t += 0.01
                     if math.hypot(vx, vy) < 40:
                         break
-                    crossed = (sign > 0 and bx >= goal_back_x) or (sign < 0 and bx <= goal_back_x)
+                    crossed = (sign > 0 and bx >= goal_back_x) or (
+                        sign < 0 and bx <= goal_back_x
+                    )
                     if crossed:
                         if abs(by) < half_goal + 200:
                             shot_incoming = True
@@ -151,7 +157,7 @@ class CalculateGoalieAction(py_trees.behaviour.Behaviour):
         d_ball = math.hypot(rel_ball[0], rel_ball[1])
         ball_dist = abs(ball[0] - goal_back_x)
 
-        ball_in_box = (ball_dist < DEFENSE_DEPTH and abs(ball[1]) < DEFENSE_HALF_WIDTH)
+        ball_in_box = ball_dist < DEFENSE_DEPTH and abs(ball[1]) < DEFENSE_HALF_WIDTH
         ball_slow = ball_speed < 450
 
         kick, dribble = 0, 0
@@ -226,8 +232,10 @@ class CalculateGoalieAction(py_trees.behaviour.Behaviour):
             vx, vy = 0.0, 0.0
         else:
             vx, vy = move_toward_relative(
-                rel_target, speed,
-                stop_radius=STOP_RADIUS, ramp_dist=RAMP_DIST,
+                rel_target,
+                speed,
+                stop_radius=STOP_RADIUS,
+                ramp_dist=RAMP_DIST,
             )
             if d_target < 100:
                 scale = d_target / 100.0
@@ -259,12 +267,14 @@ class GoalieRunningSeq(py_trees.composites.Sequence):
         self.isYellow = isYellow
         self.isPositive = isPositive if isPositive is not None else isYellow
         self.bb = py_trees.blackboard.Client(name=name)
-        self.add_children([
-            GetWorldPositionUpdate(wm),
-            GetRobotIDPosition(goalie_id),
-            CalculateGoalieAction(),
-            SendRobotCommand(dispatch_q),
-        ])
+        self.add_children(
+            [
+                GetWorldPositionUpdate(wm),
+                GetRobotIDPosition(goalie_id),
+                CalculateGoalieAction(),
+                SendRobotCommand(dispatch_q),
+            ]
+        )
 
     def setup(self, **kwargs):
         self.bb.register_key(key="robot_id", access=py_trees.common.Access.WRITE)
