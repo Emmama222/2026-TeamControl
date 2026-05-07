@@ -1,7 +1,7 @@
 ## halt state sequence
 import py_trees
 
-from TeamControl.behaviour_tree.intent import Intent
+from TeamControl.behaviour_tree.actions.stop_robot import StopRobot
 
 
 class HaltSequence(py_trees.composites.Sequence):
@@ -12,6 +12,4 @@ class HaltSequence(py_trees.composites.Sequence):
         self.robot_id = robot_id
         self.bb = py_trees.blackboard.Client(name=self.name)
 
-        self.add_child(
-            StopRobot(robot_id=self.robot_id, dispatcher_q=self.dispatcher_q)
-        )
+        self.add_child(StopRobot(robot_id=self.robot_id, dispatcher_q=dispatcher_q))

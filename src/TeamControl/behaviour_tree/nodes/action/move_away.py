@@ -1,23 +1,25 @@
 import numpy as np
 import py_trees
+
 # default rule threshould 150
 
+
 class MoveAwayRobot(py_trees.behaviour.Behaviour):
-    def __init__(self, robot_id:int, ball, threshold=150):
-		name = "MoveAwayRobot" + str(robot_id)
-		super(MoveAwayRobot, self).__init__(name=name)
-		self.bb = py_trees.blackboard.Client(name=name)
-		self.robot_id = robot_id
-		self.ball = ball
-		self.threshold = threshold
+    def __init__(self, robot_id: int, ball, distance=150):
+        name = "MoveAwayRobot" + str(robot_id)
+        super(MoveAwayRobot, self).__init__(name=name)
+        self.bb = py_trees.blackboard.Client(name=name)
+        self.robot_id = robot_id
+        self.ball = ball
+        self.distance = distance
 
-
-	def update(self, dt: float) -> py_trees.common.Status:
-		robot_pos = self.bb.get_variable(f"robot_pos_{self.robot_id}")
+    def update(self, dt: float) -> py_trees.common.Status:
+        robot_pos = self.bb.get_variable(f"robot_pos_{self.robot_id}")
         ball_pos = self.bb.get_variable(f"ball_pos")
-        target_pos = move_away_robot_from(robot_pos, ball_pos, self.threshold)
+        target_pos = move_away_robot_from(robot_pos, ball_pos, self.distance)
         self.bb.set_variable(f"target_pos_{self.robot_id}", target_pos)
         self.bb.set_variable(f"Intent{self.robot_id}", "GOTO")
+        return py_trees.common.Status.SUCCESS
 
 
 def move_away_robot_from(robot_pos, target_pos, threshold=150):
