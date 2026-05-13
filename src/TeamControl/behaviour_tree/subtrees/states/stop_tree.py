@@ -1,8 +1,8 @@
 import py_trees
 
-from TeamControl.behaviour_tree.intent import Intent as IntentEnum
-from TeamControl.behaviour_tree.nodes.action import Move, StopRobot
+from TeamControl.behaviour_tree.intent import Intent
 from TeamControl.behaviour_tree.nodes.action.move_away import MoveAwayRobot
+from TeamControl.behaviour_tree.nodes.action.stop import StopRobot
 
 
 class StopSequence(py_trees.composites.Sequence):
@@ -16,6 +16,6 @@ class StopSequence(py_trees.composites.Sequence):
         self.add_children(
             [
                 StopRobot(robot_id=self.robot_id, dispatcher_q=self.dispatcher_q),
-                MoveAwayRobot(robot_id=self.robot_id, ball=None),
+                MoveAwayRobot(robot_id=self.robot_id),
             ]
         )

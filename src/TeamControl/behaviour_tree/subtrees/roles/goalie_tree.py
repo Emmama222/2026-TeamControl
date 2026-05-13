@@ -13,8 +13,6 @@ from TeamControl.robot.constants import FACE_BALL_GAIN, MAX_W
 from TeamControl.robot.path_planner import move_toward_relative, turn_toward
 from TeamControl.world.transform_cords import world2robot
 
-from .common_trees import GetRobotIDPosition, GetWorldPositionUpdate, SendRobotCommand
-
 FIELD_LENGTH = 9000
 FIELD_WIDTH = 6000
 HALF_LEN = FIELD_LENGTH / 2
@@ -153,7 +151,7 @@ class CalculateGoalieAction(py_trees.behaviour.Behaviour):
                         break
 
         # ── Distances ─────────────────────────────────────────
-        rel_ball = world2robot(rpos, ball)
+        rel_ball: tuple[float, float] = world2robot(rpos, ball)
         d_ball = math.hypot(rel_ball[0], rel_ball[1])
         ball_dist = abs(ball[0] - goal_back_x)
 
@@ -269,10 +267,10 @@ class GoalieRunningSeq(py_trees.composites.Sequence):
         self.bb = py_trees.blackboard.Client(name=name)
         self.add_children(
             [
-                GetWorldPositionUpdate(wm),
-                GetRobotIDPosition(goalie_id),
+                # GetWorldPositionUpdate(wm),
+                # GetRobotIDPosition(goalie_id),
                 CalculateGoalieAction(),
-                SendRobotCommand(dispatch_q),
+                # SendRobotCommand(dispatch_q),
             ]
         )
 

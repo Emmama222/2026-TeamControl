@@ -1,7 +1,7 @@
 ## halt state sequence
 import py_trees
 
-from TeamControl.behaviour_tree.actions.stop_robot import StopRobot
+from TeamControl.behaviour_tree.nodes.action.stop import StopRobot
 
 
 class HaltSequence(py_trees.composites.Sequence):
