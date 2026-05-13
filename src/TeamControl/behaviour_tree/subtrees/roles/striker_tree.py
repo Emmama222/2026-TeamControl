@@ -14,7 +14,7 @@ from TeamControl.robot.Movement import RobotMovement
 from TeamControl.robot.path_planner import move_toward_relative, turn_toward
 from TeamControl.world.transform_cords import world2robot
 
-from .common_trees import GetRobotIDPosition, GetWorldPositionUpdate, SendRobotCommand
+# from TeamControl.behaviour_tree.subtrees.common_trees import GetRobotIDPosition, GetWorldPositionUpdate, SendRobotCommand
 
 FIELD_LENGTH = 9000
 GOAL_WIDTH = 1000
@@ -276,10 +276,7 @@ class StrikerRunningSeq(py_trees.composites.Sequence):
         self.bb = py_trees.blackboard.Client(name=name)
         self.add_children(
             [
-                GetWorldPositionUpdate(wm),
-                GetRobotIDPosition(robot_id),
                 CalculateStrikerAction(),
-                SendRobotCommand(dispatch_q),
             ]
         )
 
