@@ -29,10 +29,11 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["goalie", "1v1", "obstacle", "coop", "6v6"],
-        default="goalie",
+        choices=["calibration", "goalie", "1v1", "obstacle", "coop", "6v6"],
+        default="calibration",
         help=(
-            "goalie   — yellow goalie vs blue striker (default)\n"
+            "calibration - backend only; calibration runner drives robot (default)\n"
+            "goalie   — yellow goalie vs blue striker\n"
             "1v1      — yellow striker vs blue striker\n"
             "obstacle — two robots chasing ball with obstacle avoidance\n"
             "coop     — two robots cooperate to score (pass + shoot)\n"
@@ -79,7 +80,12 @@ def main():
     # ── Mode-specific foreground processes ────────────────────
     foreground = []
 
-    if args.mode == "goalie":
+    if args.mode == "calibration":
+        # Calibration mode intentionally starts no foreground robot behaviours.
+        # The PD calibration GUI/runner sends commands directly through dispatch_q.
+        pass
+
+    elif args.mode == "goalie":
         # Yellow goalie (robot 4) defends against blue striker (robot 0)
         foreground.append(
             Process(target=run_goalie,

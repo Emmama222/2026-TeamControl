@@ -9,24 +9,34 @@ Tabs:
   Console         Scrolling log viewer
 """
 
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtWidgets import (
-    QMainWindow, QToolBar, QLabel, QComboBox, QPushButton,
-    QTabWidget, QStatusBar, QWidget, QHBoxLayout, QSizePolicy,
-    QApplication, QSpinBox,
+    QApplication,
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QSizePolicy,
+    QSpinBox,
+    QStatusBar,
+    QTabWidget,
+    QToolBar,
+    QWidget,
 )
-from PySide6.QtCore import Qt, QTimer, QPointF
 from PySide6.QtGui import QAction, QFont, QIcon
 
-from TeamControl.ui.theme import QSS, ACCENT, TEXT, TEXT_DIM, SUCCESS, DANGER, WARNING
+from TeamControl.ui.calibration_page import CalibrationPage
+from TeamControl.ui.dashboard_page import DashboardPage
+from TeamControl.ui.dispatcher_panel import DispatcherPanel
 from TeamControl.ui.engine import SimEngine
 from TeamControl.ui.field_canvas import FieldCanvas
-from TeamControl.ui.dashboard_page import DashboardPage
-from TeamControl.ui.test_panel import TestPanel
-from TeamControl.ui.settings_page import SettingsPage
-from TeamControl.ui.dispatcher_panel import DispatcherPanel
 from TeamControl.ui.log_panel import LogPanel
-from TeamControl.ui.calibration_page import CalibrationPage
 from TeamControl.ui.onboard_possession_panel import OnboardPossessionPanel
+from TeamControl.ui.pd_calibration_page import PDCalibrationPage
+from TeamControl.ui.settings_page import SettingsPage
+from TeamControl.ui.test_panel import TestPanel
+from TeamControl.ui.theme import ACCENT, DANGER, QSS, SUCCESS, TEXT, TEXT_DIM, WARNING
 
 
 class MainWindow(QMainWindow):
@@ -49,9 +59,12 @@ class MainWindow(QMainWindow):
         self._test_panel = TestPanel(engine=self._engine, field=self._field)
         self._dispatch_panel = DispatcherPanel(engine=self._engine)
         self._calibration = CalibrationPage(
-            engine=self._engine, test_panel=self._test_panel)
+            engine=self._engine, test_panel=self._test_panel
+        )
+        self._pd_calibration = PDCalibrationPage(engine=self._engine)
         self._dashboard = DashboardPage(
-            self._field, engine=self._engine, test_panel=self._test_panel)
+            self._field, engine=self._engine, test_panel=self._test_panel
+        )
         self._settings = SettingsPage()
         self._log_panel = LogPanel()
         self._onboard_panel = OnboardPossessionPanel(engine=self._engine)
@@ -67,6 +80,7 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._dispatch_panel, "  Dispatcher  ")
         self._tabs.addTab(self._calibration, "  Calibration  ")
         self._tabs.addTab(self._onboard_panel, "  Onboard Possession  ")
+        self._tabs.addTab(self._pd_calibration, "  PD Calibration  ")
         self.setCentralWidget(self._tabs)
 
         # ── Toolbar ──────────────────────────────────────────────
@@ -204,34 +218,36 @@ class MainWindow(QMainWindow):
         view_menu = mb.addMenu("View")
         view_menu.addAction("Reset Field View", self._reset_field_view)
         view_menu.addSeparator()
-        for i, name in enumerate(["Dashboard", "Settings", "Console",
-                                   "Hardware Test", "Dispatcher",
-                                   "Calibration", "Onboard Possession"]):
+        for i, name in enumerate(["PD Calibration"]):
             view_menu.addAction(
-                name, lambda checked=False, idx=i: self._tabs.setCurrentIndex(idx))
+                name, lambda checked=False, idx=i: self._tabs.setCurrentIndex(idx)
+            )
 
         sim_menu = mb.addMenu("Simulation")
-        sim_menu.addAction("Center Ball",
-                           lambda: self._engine.place_ball(0, 0))
-        sim_menu.addAction("Kickoff Formation",
-                           self._settings.sim_panel._kickoff_formation)
+        sim_menu.addAction("Center Ball", lambda: self._engine.place_ball(0, 0))
+        sim_menu.addAction(
+            "Kickoff Formation", self._settings.sim_panel._kickoff_formation
+        )
 
         mode_menu = mb.addMenu("Mode")
         for m in SimEngine.MODES:
             mode_menu.addAction(
-                m.capitalize(),
-                lambda checked=False, mode=m: self._switch_mode(mode))
+                m.capitalize(), lambda checked=False, mode=m: self._switch_mode(mode)
+            )
 
         help_menu = mb.addMenu("Help")
         help_menu.addAction("About", self._show_about)
 
     def _show_about(self):
         from PySide6.QtWidgets import QMessageBox
+
         QMessageBox.about(
-            self, "TurtleRabbit",
+            self,
+            "TurtleRabbit",
             "WSU TurtleRabbit SSL Command Center\n\n"
             "RoboCup Small Size League\n"
-            "Team Control Dashboard v2.0")
+            "Team Control Dashboard v2.0",
+        )
 
     # ── Signal wiring ────────────────────────────────────────────
 
@@ -249,23 +265,26 @@ class MainWindow(QMainWindow):
 
         sp = self._settings.sim_panel
         sp.place_ball_requested.connect(
-            lambda x, y, vx, vy: eng.place_ball(x, y, vx, vy))
+            lambda x, y, vx, vy: eng.place_ball(x, y, vx, vy)
+        )
         sp.place_robot_requested.connect(
-            lambda rid, yl, x, y, o: eng.place_robot(rid, yl, x, y, o))
-        sp.field_place_ball.connect(
-            lambda: self._field.set_place_mode("ball"))
+            lambda rid, yl, x, y, o: eng.place_robot(rid, yl, x, y, o)
+        )
+        sp.field_place_ball.connect(lambda: self._field.set_place_mode("ball"))
         sp.field_place_robot.connect(
-            lambda rid, yl: self._field.set_place_mode(("robot", rid, yl)))
+            lambda rid, yl: self._field.set_place_mode(("robot", rid, yl))
+        )
 
-        self._field.ball_placed.connect(
-            lambda x, y: eng.place_ball(x, y))
+        self._field.ball_placed.connect(lambda x, y: eng.place_ball(x, y))
         self._field.robot_placed.connect(
-            lambda rid, yl, x, y: eng.place_robot(rid, yl, x, y))
+            lambda rid, yl, x, y: eng.place_robot(rid, yl, x, y)
+        )
         self._field.point_picked.connect(self._test_panel.go_to_point)
         self._field.action_requested.connect(self._test_panel.field_action)
 
         self._settings.config_panel.config_changed.connect(
-            lambda: self._log_panel.append("[config] Configuration saved"))
+            lambda: self._log_panel.append("[config] Configuration saved")
+        )
 
     # ── Handlers ─────────────────────────────────────────────────
 
@@ -277,7 +296,8 @@ class MainWindow(QMainWindow):
         our_id = self._our_id_spin.value()
         opp_id = self._opp_id_spin.value()
         self._log_panel.append(
-            f"[engine] Starting {mode} — our bot #{our_id}, opp bot #{opp_id}")
+            f"[engine] Starting {mode} — our bot #{our_id}, opp bot #{opp_id}"
+        )
         try:
             self._engine.start(mode, our_id=our_id, opp_id=opp_id)
         except Exception as e:
@@ -292,9 +312,18 @@ class MainWindow(QMainWindow):
         self._mode_combo.setCurrentIndex(idx)
         if self._engine.is_running:
             self._engine.stop()
-        self._engine.start(mode,
-                           our_id=self._our_id_spin.value(),
-                           opp_id=self._opp_id_spin.value())
+        self._engine.start(
+            mode, our_id=self._our_id_spin.value(), opp_id=self._opp_id_spin.value()
+        )
+
+    def _switch_mode(self, mode):
+        idx = SimEngine.MODES.index(mode)
+        self._mode_combo.setCurrentIndex(idx)
+        if self._engine.is_running:
+            self._engine.stop()
+        self._engine.start(
+            mode, our_id=self._our_id_spin.value(), opp_id=self._opp_id_spin.value()
+        )
 
     def _on_engine_started(self, mode):
         self._start_btn.setEnabled(False)

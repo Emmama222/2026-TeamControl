@@ -77,7 +77,7 @@ class SimEngine(QObject):
     log_message = Signal(str)            # log line
     onboard_packet = Signal(object, object)  # (OnboardObservation, addr)
 
-    MODES = ["vision_only", "goalie", "1v1", "obstacle", "coop", "6v6"]
+    MODES = ["calibration", "vision_only", "goalie", "1v1", "obstacle", "coop", "6v6"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -262,6 +262,11 @@ class SimEngine(QObject):
             f"({'yellow' if preset.us_yellow else 'blue'}), "
             f"opp shell={opp_id} "
             f"({'blue' if preset.us_yellow else 'yellow'})")
+
+        if mode == "calibration":
+            self.log_message.emit(
+                "[engine] Calibration mode - no robot behaviours running")
+            return procs
 
         if mode == "vision_only":
             self.log_message.emit(
