@@ -64,8 +64,14 @@ class ConfigPanel(QWidget):
         self._sim_vision = QCheckBox("Use grSim Vision")
         self._send_grsim = QCheckBox("Send to grSim")
         self._us_yellow = QCheckBox("We are Yellow")
+        self._record_snapshots = QCheckBox("Record World Snapshots")
 
-        for cb in (self._sim_vision, self._send_grsim, self._us_yellow):
+        for cb in (
+            self._sim_vision,
+            self._send_grsim,
+            self._us_yellow,
+            self._record_snapshots,
+        ):
             cb.setStyleSheet("font-weight:bold;")
             tgl.addWidget(cb)
         tgl.addStretch()
@@ -102,6 +108,9 @@ class ConfigPanel(QWidget):
             self._status.setStyleSheet(f"color:{DANGER};")
             return
 
+        self._raw.setdefault("record_world_snapshots", False)
+        self._raw.setdefault("record_world_snapshot_dir", "match_replays")
+
         self._tree.clear()
         self._populate(self._tree.invisibleRootItem(), self._raw)
         self._tree.expandAll()
@@ -109,6 +118,9 @@ class ConfigPanel(QWidget):
         self._sim_vision.setChecked(bool(self._raw.get("use_grSim_vision", True)))
         self._send_grsim.setChecked(bool(self._raw.get("send_to_grSim", True)))
         self._us_yellow.setChecked(bool(self._raw.get("us_yellow", True)))
+        self._record_snapshots.setChecked(
+            bool(self._raw.get("record_world_snapshots", False))
+        )
 
         self._status.setText("Loaded")
         self._status.setStyleSheet(f"color:{SUCCESS};")
@@ -136,6 +148,7 @@ class ConfigPanel(QWidget):
         self._raw["use_grSim_vision"] = self._sim_vision.isChecked()
         self._raw["send_to_grSim"] = self._send_grsim.isChecked()
         self._raw["us_yellow"] = self._us_yellow.isChecked()
+        self._raw["record_world_snapshots"] = self._record_snapshots.isChecked()
 
         try:
             with open(CONFIG_PATH, "w") as f:
