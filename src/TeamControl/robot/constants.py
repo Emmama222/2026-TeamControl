@@ -108,6 +108,7 @@ MAX_ADVANCE       = PENALTY_DEPTH - 50  # goalie must stay inside penalty box
 
 PRESSURE_DIST     = 500      # mm — opponent "under pressure" radius
 PASS_CLEAR        = 400      # mm — pass lane clearance
+POSESS_DIST 	  = 300
 
 # ═════════════════════════════════════════════════════════════════
 #  ANGULAR
