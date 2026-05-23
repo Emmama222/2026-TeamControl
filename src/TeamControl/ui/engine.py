@@ -192,7 +192,8 @@ class SimEngine(QObject):
                           self._dispatch_info_q, self._field_manual_q),
                     daemon=True),
             Process(target=RobotRecv.run_worker,
-                    args=(self._is_running, None, self._recv_q),
+                    args=(self._is_running, None, preset.robot_ip,
+                          self._recv_q),
                     daemon=True),
         ]
 
