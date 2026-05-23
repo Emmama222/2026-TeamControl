@@ -255,6 +255,7 @@ class MainWindow(QMainWindow):
         eng = self._engine
 
         eng.frame_ready.connect(self._on_frame)
+        eng.field_geometry_ready.connect(self._field.set_field_size)
         eng.game_state_ready.connect(self._dashboard.update_game_state)
         eng.dispatch_info.connect(self._dispatch_panel.update_info)
         eng.engine_started.connect(self._on_engine_started)

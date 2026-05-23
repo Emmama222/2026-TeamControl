@@ -16,6 +16,13 @@ import numpy.typing as npt
 import logging
 import time
 
+from TeamControl.world.snapshot import (
+    BallSnapshot,
+    RobotSnapshot,
+    WorldSnapshot,
+    empty_robot_team,
+)
+
 
 log = logging.getLogger()
 log.setLevel(logging.DEBUG)
@@ -128,11 +135,76 @@ class WorldModel:
     def get_latest_frame(self):
         return self.frame_list.latest
 
+    def get_field_size(self):
+        return self.field
+
     def get_last_n_frames(self, n: int):
         return self.frame_list.get_last_n_frames(n)
 
     def get_version(self):
         return self._version.value
+
+    def snapshot(self) -> WorldSnapshot:
+        """Return an immutable snapshot of the current world state.
+
+        This is the main read boundary for BT/control code. The returned
+        object does not expose the mutable SSL-Vision Frame/Robot/Ball objects.
+        """
+        frame = self.frame_list.latest
+
+        ball = None
+        yellow = empty_robot_team()
+        blue = empty_robot_team()
+        frame_number = None
+
+        if frame is not None:
+            frame_number = frame.frame_number
+            ball = self._snapshot_ball(frame.ball)
+            yellow = self._snapshot_team(frame.robots_yellow, is_yellow=True)
+            blue = self._snapshot_team(frame.robots_blue, is_yellow=False)
+
+        return WorldSnapshot(
+            version=self.get_version(),
+            timestamp=time.time(),
+            frame_number=frame_number,
+            ball=ball,
+            yellow=yellow,
+            blue=blue,
+            us_yellow=self._us_yellow,
+            us_positive=self._us_positive,
+            game_state=self._state,
+            active_robots=self.robot_active,
+            ball_left_field=self.blf_location,
+        )
+
+    def _snapshot_ball(self, ball) -> BallSnapshot | None:
+        if ball is None:
+            return None
+        return BallSnapshot(
+            x=float(ball.x),
+            y=float(ball.y),
+            confidence=float(getattr(ball, "c", 1.0)),
+            visible=True,
+        )
+
+    def _snapshot_team(self, team, is_yellow: bool) -> tuple[RobotSnapshot | None, ...]:
+        robots = list(empty_robot_team())
+        if team is None:
+            return tuple(robots)
+
+        for robot in team:
+            robot_id = int(robot.id)
+            if 0 <= robot_id < len(robots):
+                robots[robot_id] = RobotSnapshot(
+                    isYellow=is_yellow,
+                    robot_id=robot_id,
+                    x=float(robot.x),
+                    y=float(robot.y),
+                    theta=float(robot.o),
+                    confidence=float(getattr(robot, "confidence", 1.0)),
+                    visible=True,
+                )
+        return tuple(robots)
 
     # high level
     def get_all_in_team_except(self, us: bool, exclude: list[int]):

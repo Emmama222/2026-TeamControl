@@ -22,9 +22,15 @@ from TeamControl.ui.theme import (FIELD_GREEN, FIELD_LINE, YELLOW_TEAM,
                                    ROLE_GOALIE, ROLE_ATTACKER, ROLE_SUPPORT,
                                    ROLE_DEFENDER, TEXT)
 from TeamControl.robot.constants import (
-    FIELD_LENGTH, FIELD_WIDTH, HALF_LEN, HALF_WID,
-    PENALTY_DEPTH, PENALTY_WIDTH, CENTER_RADIUS,
-    GOAL_DEPTH, GOAL_WIDTH, ROBOT_RADIUS, FIELD_MARGIN as MARGIN,
+    FIELD_LENGTH as DEFAULT_FIELD_LENGTH,
+    FIELD_WIDTH as DEFAULT_FIELD_WIDTH,
+    PENALTY_DEPTH as DEFAULT_PENALTY_DEPTH,
+    PENALTY_WIDTH as DEFAULT_PENALTY_WIDTH,
+    CENTER_RADIUS as DEFAULT_CENTER_RADIUS,
+    GOAL_DEPTH as DEFAULT_GOAL_DEPTH,
+    GOAL_WIDTH as DEFAULT_GOAL_WIDTH,
+    ROBOT_RADIUS,
+    FIELD_MARGIN as DEFAULT_MARGIN,
 )
 
 
@@ -50,6 +56,15 @@ class FieldCanvas(QWidget):
         self._paths: list[list[tuple]] = []
         self._frame_number = 0
 
+        self._field_length = DEFAULT_FIELD_LENGTH
+        self._field_width = DEFAULT_FIELD_WIDTH
+        self._goal_depth = DEFAULT_GOAL_DEPTH
+        self._goal_width = DEFAULT_GOAL_WIDTH
+        self._penalty_depth = DEFAULT_PENALTY_DEPTH
+        self._penalty_width = DEFAULT_PENALTY_WIDTH
+        self._center_radius = DEFAULT_CENTER_RADIUS
+        self._margin = DEFAULT_MARGIN
+
         # View transform
         self._scale = 1.0
         self._offset = QPointF(0, 0)
@@ -66,6 +81,27 @@ class FieldCanvas(QWidget):
         self._blue = snap.blue
         self._ball = snap.ball
         self._frame_number = snap.frame_number
+        self.update()
+
+    def set_field_size(self, field):
+        if field is None:
+            return
+        self._field_length = float(getattr(field, "field_length", self._field_length))
+        self._field_width = float(getattr(field, "field_width", self._field_width))
+        self._goal_depth = float(getattr(field, "goal_depth", self._goal_depth))
+        self._goal_width = float(getattr(field, "goal_width", self._goal_width))
+        self._margin = float(getattr(field, "boundary_width", self._margin))
+        self._penalty_depth = float(
+            getattr(field, "penalty_area_depth", self._penalty_depth)
+            or self._penalty_depth
+        )
+        self._penalty_width = float(
+            getattr(field, "penalty_area_width", self._penalty_width)
+            or self._penalty_width
+        )
+        center_radius = self._find_center_radius(field)
+        if center_radius is not None:
+            self._center_radius = center_radius
         self.update()
 
     def set_targets(self, targets):
@@ -87,8 +123,8 @@ class FieldCanvas(QWidget):
 
     def _view_transform(self) -> QTransform:
         w, h = self.width(), self.height()
-        total_w = FIELD_LENGTH + 2 * MARGIN + 2 * GOAL_DEPTH
-        total_h = FIELD_WIDTH + 2 * MARGIN
+        total_w = self._field_length + 2 * self._margin + 2 * self._goal_depth
+        total_h = self._field_width + 2 * self._margin
         sx = w / total_w * self._scale
         sy = h / total_h * self._scale
         s = min(sx, sy)
@@ -130,10 +166,12 @@ class FieldCanvas(QWidget):
         p.end()
 
     def _draw_field(self, p: QPainter):
-        outer = QRectF(-(HALF_LEN + MARGIN + GOAL_DEPTH),
-                       -(HALF_WID + MARGIN),
-                       FIELD_LENGTH + 2 * MARGIN + 2 * GOAL_DEPTH,
-                       FIELD_WIDTH + 2 * MARGIN)
+        half_len = self._field_length / 2
+        half_wid = self._field_width / 2
+        outer = QRectF(-(half_len + self._margin + self._goal_depth),
+                       -(half_wid + self._margin),
+                       self._field_length + 2 * self._margin + 2 * self._goal_depth,
+                       self._field_width + 2 * self._margin)
         p.fillRect(outer, QColor(FIELD_GREEN))
 
         pen = QPen(QColor(FIELD_LINE), 20)
@@ -141,13 +179,13 @@ class FieldCanvas(QWidget):
         p.setBrush(Qt.NoBrush)
 
         # Outer boundary
-        p.drawRect(QRectF(-HALF_LEN, -HALF_WID, FIELD_LENGTH, FIELD_WIDTH))
+        p.drawRect(QRectF(-half_len, -half_wid, self._field_length, self._field_width))
 
         # Center line
-        p.drawLine(QPointF(0, -HALF_WID), QPointF(0, HALF_WID))
+        p.drawLine(QPointF(0, -half_wid), QPointF(0, half_wid))
 
         # Center circle
-        p.drawEllipse(QPointF(0, 0), CENTER_RADIUS, CENTER_RADIUS)
+        p.drawEllipse(QPointF(0, 0), self._center_radius, self._center_radius)
 
         # Center dot
         p.setBrush(QColor(FIELD_LINE))
@@ -155,21 +193,33 @@ class FieldCanvas(QWidget):
         p.setBrush(Qt.NoBrush)
 
         # Left penalty area
-        ph = PENALTY_WIDTH / 2
-        p.drawRect(QRectF(-HALF_LEN, -ph, PENALTY_DEPTH, PENALTY_WIDTH))
+        ph = self._penalty_width / 2
+        p.drawRect(QRectF(-half_len, -ph, self._penalty_depth, self._penalty_width))
 
         # Right penalty area
-        p.drawRect(QRectF(HALF_LEN - PENALTY_DEPTH, -ph,
-                          PENALTY_DEPTH, PENALTY_WIDTH))
+        p.drawRect(QRectF(half_len - self._penalty_depth, -ph,
+                          self._penalty_depth, self._penalty_width))
 
         # Left goal
-        gh = GOAL_WIDTH / 2
+        gh = self._goal_width / 2
         goal_pen = QPen(QColor("#cccccc"), 16)
         p.setPen(goal_pen)
-        p.drawRect(QRectF(-HALF_LEN - GOAL_DEPTH, -gh, GOAL_DEPTH, GOAL_WIDTH))
+        p.drawRect(QRectF(-half_len - self._goal_depth, -gh,
+                          self._goal_depth, self._goal_width))
 
         # Right goal
-        p.drawRect(QRectF(HALF_LEN, -gh, GOAL_DEPTH, GOAL_WIDTH))
+        p.drawRect(QRectF(half_len, -gh, self._goal_depth, self._goal_width))
+
+    @staticmethod
+    def _find_center_radius(field):
+        for arc in getattr(field, "field_arcs", []) or []:
+            name = str(getattr(arc, "name", "")).lower()
+            arc_type = str(getattr(arc, "type", "")).lower()
+            if "center" in name or "centercircle" in arc_type:
+                radius = getattr(arc, "radius", None)
+                if radius is not None:
+                    return float(radius)
+        return None
 
     def _draw_robots(self, p: QPainter, robots, color: QColor):
         if not robots:
