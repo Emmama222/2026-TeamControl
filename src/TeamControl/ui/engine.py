@@ -8,6 +8,7 @@ that drive every widget in the dashboard.
 import time
 import math
 from multiprocessing import Process, Queue, Event
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -18,6 +19,7 @@ from TeamControl.process_workers.robot_recv_runner import RobotRecv
 from TeamControl.world.model_manager import WorldModelManager
 from TeamControl.dispatcher.dispatch import Dispatcher
 from TeamControl.utils.yaml_config import Config
+from TeamControl.world.recording import AsyncSnapshotRecorder
 
 from TeamControl.robot.goalie import run_goalie
 from TeamControl.robot.striker import run_striker
@@ -70,6 +72,7 @@ class SimEngine(QObject):
     """Manages the multiprocessing backend and emits signals for UI."""
 
     frame_ready = Signal(object)         # FrameSnapshot
+    field_geometry_ready = Signal(object)  # FieldSize
     game_state_ready = Signal(object)    # str | None
     dispatch_info = Signal(object)       # dict snapshot from dispatcher
     engine_started = Signal(str)         # mode name
@@ -94,10 +97,12 @@ class SimEngine(QObject):
         self._recv_q: Queue | None = None
         self._grsim_sender: grSimSender | None = None
         self._field_manual_q: Queue | None = None
+        self._snapshot_recorder: AsyncSnapshotRecorder | None = None
 
         self._running = False
         self._mode = ""
         self._last_version = -1
+        self._last_field_geometry_key = None
 
         self._onboard_store = OnboardObservationStore()
         self._ip_to_robot: dict[str, tuple[bool, int]] = {}
@@ -204,9 +209,20 @@ class SimEngine(QObject):
         except Exception:
             self._grsim_sender = None
 
+        if preset.record_world_snapshots:
+            replay_dir = (
+                Path(preset.record_world_snapshot_dir)
+                / f"{time.strftime('%Y%m%d_%H%M%S')}_{mode}"
+            )
+            self._snapshot_recorder = AsyncSnapshotRecorder(replay_dir)
+            self.log_message.emit(f"[record] World snapshots -> {replay_dir}")
+        else:
+            self._snapshot_recorder = None
+
         self._running = True
         self._mode = mode
         self._last_version = -1
+        self._last_field_geometry_key = None
         self._poll_timer.start()
 
         self.engine_started.emit(mode)
@@ -230,6 +246,14 @@ class SimEngine(QObject):
 
         self._fg_procs.clear()
         self._bg_procs.clear()
+
+        if self._snapshot_recorder is not None:
+            dropped = self._snapshot_recorder.dropped
+            self._snapshot_recorder.close()
+            self.log_message.emit(
+                f"[record] Snapshot recorder stopped; dropped={dropped}"
+            )
+            self._snapshot_recorder = None
 
         if self._wm_manager:
             try:
@@ -328,6 +352,7 @@ class SimEngine(QObject):
             frame = self._wm.get_latest_frame()
             if frame is None:
                 return
+            self._sync_field_geometry()
             snap = self._extract_snapshot(frame)
             self.frame_ready.emit(snap)
 
@@ -336,11 +361,34 @@ class SimEngine(QObject):
                 self._last_version = ver
                 gs = self._wm.get_game_state()
                 self.game_state_ready.emit(gs)
+                if self._snapshot_recorder is not None:
+                    self._record_world_snapshot()
         except Exception as exc:
             self.log_message.emit(f"[engine] poll error: {exc}")
 
         self._sync_onboard_from_wm()
         self._drain_dispatch_info()
+
+    def _sync_field_geometry(self):
+        try:
+            field = self._wm.get_field_size()
+        except Exception:
+            return
+        if field is None:
+            return
+        key = (
+            getattr(field, "field_length", None),
+            getattr(field, "field_width", None),
+            getattr(field, "goal_width", None),
+            getattr(field, "goal_depth", None),
+            getattr(field, "boundary_width", None),
+            getattr(field, "penalty_area_depth", None),
+            getattr(field, "penalty_area_width", None),
+        )
+        if key == self._last_field_geometry_key:
+            return
+        self._last_field_geometry_key = key
+        self.field_geometry_ready.emit(field)
 
     def _drain_dispatch_info(self):
         if self._dispatch_info_q is None:
@@ -353,6 +401,14 @@ class SimEngine(QObject):
             pass
         if latest is not None:
             self.dispatch_info.emit(latest)
+
+    def _record_world_snapshot(self):
+        try:
+            snap = self._wm.snapshot()
+            if not self._snapshot_recorder.write(snap):
+                self.log_message.emit("[record] Snapshot queue full; dropping")
+        except Exception as exc:
+            self.log_message.emit(f"[record] snapshot failed: {exc}")
 
     def _sync_onboard_from_wm(self):
         """Mirror new onboard observations from the shared WM into the
