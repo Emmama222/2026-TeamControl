@@ -74,7 +74,7 @@ def main():
         Process(target=Dispatcher.run_worker,
                 args=(is_running, logger, dispatch_q, preset)),
         Process(target=RobotRecv.run_worker,
-                args=(is_running, logger, recv_q)),
+                args=(is_running, logger, preset.robot_ip,recv_q)),
     ]
 
     # ── Mode-specific foreground processes ────────────────────
