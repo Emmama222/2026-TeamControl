@@ -175,3 +175,4 @@ cython_debug/
 share/
 
 src/TeamControl/harness/logs/
+match_replays/
