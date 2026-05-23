@@ -8,9 +8,6 @@ try:
 except ImportError as e:
     from yaml import Loader
 
-DEFAULT_IP = "192.168.1.2"
-DEFAULT_VISION_IP = "192.168.1.2"
-
 
 class Config:
     def __init__(self, config_filename: str = "ipconfig.yaml"):
@@ -28,9 +25,9 @@ class Config:
         self.vision = raw["vision"]["multicast-group"], raw["vision"]["port"]
         self.game_controller = raw["gc"]["multicast-group"], raw["gc"]["port"]
 
-        net = raw.get("network", {})
-        self.robot_ip = net.get("robot_ip", DEFAULT_IP)
-        self.vision_ip = net.get("vision_ip", DEFAULT_VISION_IP)
+
+        self.robot_ip = raw["network"]["robot_ip"]
+        self.vision_ip = raw["network"]["vision_ip"]
         self.use_grSim_vision = raw["use_grSim_vision"]
         self.us_yellow = raw["us_yellow"]
         self.us_positive = raw["us_positive"]
