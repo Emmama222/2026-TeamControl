@@ -29,52 +29,21 @@ from TeamControl.robot.coop import run_coop
 
 from TeamControl.network.ssl_sockets import grSimSender
 from TeamControl.network.grSimPacketFactory import grSimPacketFactory
+from TeamControl.network.robot_command import RobotCommand
 from TeamControl.onboard_vision import (
     OnboardObservationStore, build_ip_map,
 )
-
-
-# ── Snapshot dataclasses ─────────────────────────────────────────────
-
-class RobotSnapshot:
-    __slots__ = ("id", "team", "x", "y", "o", "confidence")
-
-    def __init__(self, rid, team, x, y, o, conf):
-        self.id = rid
-        self.team = team
-        self.x = x
-        self.y = y
-        self.o = o
-        self.confidence = conf
-
-
-class BallSnapshot:
-    __slots__ = ("x", "y")
-
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-
-
-class FrameSnapshot:
-    __slots__ = ("yellow", "blue", "ball", "frame_number")
-
-    def __init__(self):
-        self.yellow: list[RobotSnapshot] = []
-        self.blue: list[RobotSnapshot] = []
-        self.ball: BallSnapshot | None = None
-        self.frame_number: int = 0
-
 
 # ── Engine ───────────────────────────────────────────────────────────
 
 class SimEngine(QObject):
     """Manages the multiprocessing backend and emits signals for UI."""
 
-    frame_ready = Signal(object)         # FrameSnapshot
+    frame_ready = Signal(object)         # WorldSnapshot
     field_geometry_ready = Signal(object)  # FieldSize
     game_state_ready = Signal(object)    # str | None
     dispatch_info = Signal(object)       # dict snapshot from dispatcher
+    channel_status_ready = Signal(object)  # runtime channel freshness
     engine_started = Signal(str)         # mode name
     engine_stopped = Signal()
     log_message = Signal(str)            # log line
@@ -98,6 +67,9 @@ class SimEngine(QObject):
         self._grsim_sender: grSimSender | None = None
         self._field_manual_q: Queue | None = None
         self._snapshot_recorder: AsyncSnapshotRecorder | None = None
+        self._channel_options: dict[str, bool] = {}
+        self._channel_last_seen: dict[str, float] = {}
+        self._channel_display_ms: dict[str, int] = {}
 
         self._running = False
         self._mode = ""
@@ -147,18 +119,51 @@ class SimEngine(QObject):
         except Exception:
             pass
 
+    def send_robot_command(self, command: RobotCommand, runtime: float = 0.20):
+        """Queue a UI-originated command through the normal dispatcher path."""
+        if not self._running or self._dispatch_q is None:
+            return False
+        try:
+            self._dispatch_q.put_nowait((command, float(runtime)))
+            return True
+        except Exception:
+            return False
+
     # ── Lifecycle ─────────────────────────────────────────────────
 
     def reload_config(self):
         self._config = Config()
         return self._config
 
-    def start(self, mode: str = "goalie", our_id: int = 0, opp_id: int = 0):
+    def start(
+        self,
+        mode: str = "goalie",
+        our_id: int = 0,
+        opp_id: int = 0,
+        channel_options: dict | None = None,
+    ):
         if self._running:
             self.stop()
 
         self._config = Config()
         preset = self._config
+        defaults = {
+            "vision": True,
+            "gc": True,
+            "robot_recv": True,
+            "use_grsim": bool(preset.use_grSim_vision),
+            "send_grsim": bool(preset.send_to_grSim),
+            "record_wm": bool(getattr(preset, "record_world_snapshots", False)),
+        }
+        if channel_options:
+            defaults.update({k: bool(v) for k, v in channel_options.items()})
+        self._channel_options = defaults
+        self._channel_last_seen = {}
+        self._channel_display_ms = {}
+
+        preset.use_grSim_vision = defaults["use_grsim"]
+        preset.send_to_grSim = defaults["send_grsim"]
+        preset.record_world_snapshots = defaults["record_wm"]
         self._ip_to_robot = build_ip_map(preset)
 
         self._vision_q = Queue()
@@ -173,29 +178,36 @@ class SimEngine(QObject):
         self._wm_manager.start()
         self._wm = self._wm_manager.WorldModel()
 
-        self._bg_procs = [
-            Process(target=VisionProcess.run_worker,
-                    args=(self._is_running, None, self._vision_q,
-                          preset.use_grSim_vision, preset.vision[1]),
-                    daemon=True),
-            Process(target=GCfsm.run_worker,
-                    args=(self._is_running, None, self._gc_q,
-                          preset.us_yellow, preset.us_positive),
-                    daemon=True),
+        self._bg_procs = []
+        if defaults["vision"]:
+            self._bg_procs.append(
+                Process(target=VisionProcess.run_worker,
+                        args=(self._is_running, None, self._vision_q,
+                              preset.use_grSim_vision, preset.vision[1]),
+                        daemon=True))
+        if defaults["gc"]:
+            self._bg_procs.append(
+                Process(target=GCfsm.run_worker,
+                        args=(self._is_running, None, self._gc_q,
+                              preset.us_yellow, preset.us_positive),
+                        daemon=True))
+        self._bg_procs.append(
             Process(target=WMWorker.run_worker,
                     args=(self._is_running, None, self._wm,
                           self._vision_q, self._gc_q,
                           self._recv_q, dict(self._ip_to_robot)),
-                    daemon=True),
+                    daemon=True))
+        self._bg_procs.append(
             Process(target=Dispatcher.run_worker,
                     args=(self._is_running, None, self._dispatch_q, preset,
                           self._dispatch_info_q, self._field_manual_q),
-                    daemon=True),
-            Process(target=RobotRecv.run_worker,
-                    args=(self._is_running, None, preset.robot_ip,
-                          self._recv_q),
-                    daemon=True),
-        ]
+                    daemon=True))
+        if defaults["robot_recv"]:
+            self._bg_procs.append(
+                Process(target=RobotRecv.run_worker,
+                        args=(self._is_running, None, preset.robot_ip,
+                              self._recv_q),
+                        daemon=True))
 
         self._fg_procs = self._build_foreground(mode, preset, our_id, opp_id)
 
@@ -228,6 +240,7 @@ class SimEngine(QObject):
 
         self.engine_started.emit(mode)
         self.log_message.emit(f"[engine] Started mode: {mode}")
+        self._emit_channel_status()
 
     def stop(self):
         if not self._running:
@@ -270,6 +283,9 @@ class SimEngine(QObject):
         self._running = False
         self._mode = ""
         self._grsim_sender = None
+        self._channel_options = {}
+        self._channel_last_seen = {}
+        self._channel_display_ms = {}
 
         self.engine_stopped.emit()
         self.log_message.emit("[engine] Stopped")
@@ -328,12 +344,14 @@ class SimEngine(QObject):
             procs.append(Process(target=run_coop,
                                  args=(ev, dq, wm, our_id, opp_id, us_y),
                                  kwargs=dict(mate_is_yellow=opp_y,
-                                             attack_positive=True),
+                                             attack_positive=True,
+                                             grsim_addr=preset.grSim_addr),
                                  daemon=True))
             procs.append(Process(target=run_coop,
                                  args=(ev, dq, wm, opp_id, our_id, opp_y),
                                  kwargs=dict(mate_is_yellow=us_y,
-                                             attack_positive=True),
+                                             attack_positive=True,
+                                             grsim_addr=preset.grSim_addr),
                                  daemon=True))
         elif mode == "6v6":
             procs.append(Process(target=run_team,
@@ -351,16 +369,18 @@ class SimEngine(QObject):
             return
         try:
             frame = self._wm.get_latest_frame()
-            if frame is None:
-                return
-            self._sync_field_geometry()
-            snap = self._extract_snapshot(frame)
-            self.frame_ready.emit(snap)
+            if frame is not None:
+                self._sync_field_geometry()
+                snap = self._wm.snapshot()
+                self._mark_channel_seen("vision")
+                self.frame_ready.emit(snap)
 
             ver = self._wm.get_version()
             if ver != self._last_version:
                 self._last_version = ver
                 gs = self._wm.get_game_state()
+                if gs is not None:
+                    self._mark_channel_seen("gc")
                 self.game_state_ready.emit(gs)
                 if self._snapshot_recorder is not None:
                     self._record_world_snapshot()
@@ -369,6 +389,7 @@ class SimEngine(QObject):
 
         self._sync_onboard_from_wm()
         self._drain_dispatch_info()
+        self._emit_channel_status()
 
     def _sync_field_geometry(self):
         try:
@@ -401,6 +422,7 @@ class SimEngine(QObject):
         except Exception:
             pass
         if latest is not None:
+            self._mark_channel_seen("send_grsim")
             self.dispatch_info.emit(latest)
 
     def _record_world_snapshot(self):
@@ -408,6 +430,8 @@ class SimEngine(QObject):
             snap = self._wm.snapshot()
             if not self._snapshot_recorder.write(snap):
                 self.log_message.emit("[record] Snapshot queue full; dropping")
+            else:
+                self._mark_channel_seen("record_wm")
         except Exception as exc:
             self.log_message.emit(f"[record] snapshot failed: {exc}")
 
@@ -426,27 +450,44 @@ class SimEngine(QObject):
             if ts <= self._onboard_last_ts.get(key, 0.0):
                 continue
             self._onboard_last_ts[key] = ts
+            self._mark_channel_seen("robot_recv")
             self._onboard_store.put(obs)
             self.onboard_packet.emit(obs, None)
 
-    def _extract_snapshot(self, frame) -> FrameSnapshot:
-        snap = FrameSnapshot()
-        snap.frame_number = frame.frame_number
+    def _mark_channel_seen(self, name: str):
+        now = time.time()
+        previous = self._channel_last_seen.get(name)
+        self._channel_last_seen[name] = now
+        if previous is None:
+            self._channel_display_ms[name] = 0
+        else:
+            self._channel_display_ms[name] = min(int((now - previous) * 1000.0), 99)
 
-        if frame.robots_yellow:
-            for r in frame.robots_yellow:
-                snap.yellow.append(RobotSnapshot(
-                    r.id, "yellow", r.x, r.y, r.o, r.confidence))
-
-        if frame.robots_blue:
-            for r in frame.robots_blue:
-                snap.blue.append(RobotSnapshot(
-                    r.id, "blue", r.x, r.y, r.o, r.confidence))
-
-        if frame.ball:
-            snap.ball = BallSnapshot(frame.ball.x, frame.ball.y)
-
-        return snap
+    def _emit_channel_status(self):
+        now = time.time()
+        stale_after_ms = {
+            "vision": 150,
+            "use_grsim": 150,
+            "gc": 1000,
+            "robot_recv": 1000,
+            "send_grsim": 1000,
+            "record_wm": 1500,
+        }
+        status = {}
+        for name, enabled in self._channel_options.items():
+            last_name = "vision" if name == "use_grsim" else name
+            last = self._channel_last_seen.get(last_name)
+            age_ms = None if last is None else int((now - last) * 1000.0)
+            stale_limit = stale_after_ms.get(name, 1000)
+            stale = age_ms is None or age_ms > stale_limit
+            display_ms = self._channel_display_ms.get(last_name)
+            status[name] = {
+                "enabled": bool(enabled),
+                "latency_ms": None if stale else display_ms,
+                "age_ms": age_ms,
+                "stale": stale,
+            }
+        self.channel_status_ready.emit(status)
 
     # ── Simulation controls ───────────────────────────────────────
 
