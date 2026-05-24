@@ -1,5 +1,5 @@
 ## applies different movement strategies to move the robot to a target position
-# see `docs/movement_strategies.md` for more information
+# see `docs/motion-strategy.md` for more information
 import time
 from enum import Enum
 
