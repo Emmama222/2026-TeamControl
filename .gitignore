@@ -176,3 +176,5 @@ share/
 
 src/TeamControl/harness/logs/
 match_replays/
+movement_calibration.json
+*.json
