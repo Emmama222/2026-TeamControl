@@ -31,6 +31,20 @@ class RobotSnapshot:
     def position(self) -> tuple[float, float]:
         return (self.x, self.y)
 
+    @property
+    def id(self) -> int:
+        """Compatibility alias for older UI code."""
+        return self.robot_id
+
+    @property
+    def o(self) -> float:
+        """Compatibility alias for older UI code."""
+        return self.theta
+
+    @property
+    def team(self) -> str:
+        return "yellow" if self.isYellow else "blue"
+
 
 @dataclass(frozen=True, slots=True)
 class BallSnapshot:
