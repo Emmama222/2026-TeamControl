@@ -39,3 +39,14 @@ class SettingsPage(QWidget):
         splitter.setStretchFactor(1, 1)
 
         root.addWidget(splitter)
+
+    # ── Channel control passthrough ───────────────────────────────
+
+    def channel_options(self) -> dict:
+        return self.sim_panel.channel_options()
+
+    def set_channel_defaults(self, config):
+        self.sim_panel.set_channel_defaults(config)
+
+    def set_channel_controls_enabled(self, enabled: bool):
+        self.sim_panel.set_channel_controls_enabled(enabled)
