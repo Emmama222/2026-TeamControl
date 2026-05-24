@@ -44,7 +44,7 @@ def _load_tuning():
 _t = _load_tuning()
 
 # ═════════════════════════════════════════════════════════════════
-#  FIELD GEOMETRY (mm) — SSL small field 5000 × 3000
+#  FIELD GEOMETRY (mm) — SSL Division B field 9000 × 6000
 # ═════════════════════════════════════════════════════════════════
 
 FIELD_LENGTH      = 4500
@@ -124,6 +124,22 @@ LINEAR_KP         = _t["linear_kp"]   # mm -> m/s
 LINEAR_KD         = _t["linear_kd"]   # mm/s -> m/s
 ANGLE_EPSILON     = _t["angle_epsilon"]  # deadband below which ω = 0
 BLEND_DIST        = 300.0                # mm — below this, full rotation allowed
+
+# NOTE: MAX_W (above) caps PD angular output at 0.30 rad/s via W_CLAMP_PCT.
+# The legacy tuning values angular_normal_speed=0.5 / angular_fast_speed=0.6
+# (stored in tuning.json) exceed this limit — they are used only in the
+# proportional behaviour layer (ball_nav / Movement.py), not in the PD
+# controller.  Raise MAX_W_RAW or W_CLAMP_PCT in tuning.json to
+# increase the PD controller's angular ceiling.
+
+# ─────────────────────────────────────────────────────────────────
+#  PD HARDWARE COMPENSATION DEFAULTS
+# ─────────────────────────────────────────────────────────────────
+# Per-robot values are stored in movement_calibration.json.
+# These are the fallback when no per-robot calibration exists.
+
+MIN_V             = 0.0    # m/s   — minimum linear command (dead-zone floor)
+MIN_W             = 0.0    # rad/s — minimum angular command (dead-zone floor)
 
 # Threshold zones for go_to_target (mm)
 KICKER_ZONE        = 70       # below this, speed is 0
