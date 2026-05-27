@@ -41,7 +41,7 @@ class SimEngine(QObject):
 
     frame_ready = Signal(object)         # WorldSnapshot
     field_geometry_ready = Signal(object)  # FieldSize
-    game_state_ready = Signal(object)    # str | None
+    game_state_ready = Signal(object)    # GC status dict | GameState | None
     dispatch_info = Signal(object)       # dict snapshot from dispatcher
     channel_status_ready = Signal(object)  # runtime channel freshness
     engine_started = Signal(str)         # mode name
@@ -124,7 +124,7 @@ class SimEngine(QObject):
         if not self._running or self._dispatch_q is None:
             return False
         try:
-            self._dispatch_q.put_nowait((command, float(runtime)))
+            self._dispatch_q.put_nowait((command, float(runtime), "manual"))
             return True
         except Exception:
             return False
@@ -378,10 +378,10 @@ class SimEngine(QObject):
             ver = self._wm.get_version()
             if ver != self._last_version:
                 self._last_version = ver
-                gs = self._wm.get_game_state()
-                if gs is not None:
+                gc_status = self._wm.get_gc_status()
+                if gc_status.get("received_at") is not None:
                     self._mark_channel_seen("gc")
-                self.game_state_ready.emit(gs)
+                self.game_state_ready.emit(gc_status)
                 if self._snapshot_recorder is not None:
                     self._record_world_snapshot()
         except Exception as exc:

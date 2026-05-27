@@ -6,7 +6,6 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
     QGridLayout,
     QLabel,
     QPushButton,
@@ -17,9 +16,10 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 
+from TeamControl.robot import constants as C
 from TeamControl.robot.motion import get_motion_controller
 from TeamControl.robot.motion.pd_calibration import PDCalibration
-from TeamControl.ui.theme import ACCENT, BG_CARD, BORDER, DANGER, SUCCESS, TEXT, TEXT_DIM
+from TeamControl.ui.theme import ACCENT, BG_CARD, BORDER, DANGER, SUCCESS, TEXT, TEXT_DIM, WARNING
 
 
 class EnginePoseSource:
@@ -65,7 +65,7 @@ class PDCalibrationPage(QWidget):
         root.setSpacing(10)
 
         title = QLabel("PD Calibration")
-        title.setStyleSheet(f"color:{ACCENT}; font-size:18px; font-weight:bold;")
+        title.setStyleSheet(f"color:{ACCENT}; font-size:14px; font-weight:bold;")
         root.addWidget(title)
 
         setup = QFrame()
@@ -86,42 +86,47 @@ class PDCalibrationPage(QWidget):
         self._use_hardware = QCheckBox("Use Hardware")
         self._use_hardware.setChecked(False)
 
-        self._turn_kp = self._gain_spin(1.0, step=0.05)
-        self._turn_kd = self._gain_spin(0.1, step=0.01)
-        self._linear_kp = self._gain_spin(0.002, step=0.0001, decimals=5)
-        self._linear_kd = self._gain_spin(0.0005, step=0.0001, decimals=5)
+        # Spinbox defaults read from constants.py so they track tuning.json changes
+        self._turn_kp = self._gain_spin(C.TURN_KP, step=0.05)
+        self._turn_kd = self._gain_spin(C.TURN_KD, step=0.01)
+        self._linear_kp = self._gain_spin(C.LINEAR_KP, step=0.0001, decimals=5)
+        self._linear_kd = self._gain_spin(C.LINEAR_KD, step=0.0001, decimals=5)
         self._speed_scale = self._gain_spin(1.0, step=0.01)
         self._lateral_drift = self._signed_spin(0.0, -50.0, 50.0, step=0.5)
         self._stop_overshoot = self._signed_spin(0.0, 0.0, 500.0, step=5.0)
-        self._min_v = self._signed_spin(0.0, 0.0, 1.0, step=0.01)
-        self._min_w = self._signed_spin(0.0, 0.0, 3.0, step=0.01)
+        self._min_v = self._signed_spin(C.MIN_V, 0.0, 1.0, step=0.01)
+        self._min_w = self._signed_spin(C.MIN_W, 0.0, 3.0, step=0.01)
 
-        grid.addWidget(QLabel("Robot ID"), 0, 0)
-        grid.addWidget(self._robot_id, 0, 1)
-        grid.addWidget(self._is_yellow, 0, 2)
-        grid.addWidget(self._use_pd, 0, 3)
-        grid.addWidget(self._use_hardware, 0, 4)
-        grid.addWidget(QLabel("turn_kp"), 1, 0)
-        grid.addWidget(self._turn_kp, 1, 1)
-        grid.addWidget(QLabel("turn_kd"), 1, 2)
-        grid.addWidget(self._turn_kd, 1, 3)
-        grid.addWidget(QLabel("linear_kp"), 2, 0)
-        grid.addWidget(self._linear_kp, 2, 1)
-        grid.addWidget(QLabel("linear_kd"), 2, 2)
-        grid.addWidget(self._linear_kd, 2, 3)
-        grid.addWidget(QLabel("speed_scale"), 3, 0)
-        grid.addWidget(self._speed_scale, 3, 1)
-        grid.addWidget(QLabel("drift mm/m"), 3, 2)
-        grid.addWidget(self._lateral_drift, 3, 3)
-        grid.addWidget(QLabel("overshoot mm"), 4, 0)
-        grid.addWidget(self._stop_overshoot, 4, 1)
-        grid.addWidget(QLabel("min_v"), 4, 2)
-        grid.addWidget(self._min_v, 4, 3)
-        grid.addWidget(QLabel("min_w"), 5, 0)
-        grid.addWidget(self._min_w, 5, 1)
+        self._gain_source_lbl = QLabel("Source: constants.py (global defaults)")
+        self._gain_source_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+        grid.addWidget(self._gain_source_lbl, 0, 0, 1, 4)
+
+        grid.addWidget(QLabel("Robot ID"), 1, 0)
+        grid.addWidget(self._robot_id, 1, 1)
+        grid.addWidget(self._is_yellow, 1, 2)
+        grid.addWidget(self._use_pd, 2, 0, 1, 2)
+        grid.addWidget(self._use_hardware, 2, 2, 1, 2)
+        grid.addWidget(QLabel("turn_kp"), 3, 0)
+        grid.addWidget(self._turn_kp, 3, 1)
+        grid.addWidget(QLabel("turn_kd"), 3, 2)
+        grid.addWidget(self._turn_kd, 3, 3)
+        grid.addWidget(QLabel("linear_kp"), 4, 0)
+        grid.addWidget(self._linear_kp, 4, 1)
+        grid.addWidget(QLabel("linear_kd"), 4, 2)
+        grid.addWidget(self._linear_kd, 4, 3)
+        grid.addWidget(QLabel("speed_scale"), 5, 0)
+        grid.addWidget(self._speed_scale, 5, 1)
+        grid.addWidget(QLabel("drift mm/m"), 5, 2)
+        grid.addWidget(self._lateral_drift, 5, 3)
+        grid.addWidget(QLabel("overshoot mm"), 6, 0)
+        grid.addWidget(self._stop_overshoot, 6, 1)
+        grid.addWidget(QLabel("min_v"), 6, 2)
+        grid.addWidget(self._min_v, 6, 3)
+        grid.addWidget(QLabel("min_w"), 7, 0)
+        grid.addWidget(self._min_w, 7, 1)
         root.addWidget(setup)
 
-        actions = QHBoxLayout()
+        actions = QGridLayout()
         self._start_btn = QPushButton("Start Calibration Backend")
         self._turn_btn = QPushButton("Run Angular Turn")
         self._linear_btn = QPushButton("Run Linear Forward")
@@ -129,12 +134,12 @@ class PDCalibrationPage(QWidget):
         self._save_btn = QPushButton("Save Last Result")
         self._clear_btn = QPushButton("Clear Tuned Gains")
 
-        actions.addWidget(self._start_btn)
-        actions.addWidget(self._turn_btn)
-        actions.addWidget(self._linear_btn)
-        actions.addWidget(self._apply_default_btn)
-        actions.addWidget(self._save_btn)
-        actions.addWidget(self._clear_btn)
+        actions.addWidget(self._start_btn, 0, 0, 1, 2)
+        actions.addWidget(self._turn_btn, 1, 0)
+        actions.addWidget(self._linear_btn, 1, 1)
+        actions.addWidget(self._apply_default_btn, 2, 0)
+        actions.addWidget(self._save_btn, 2, 1)
+        actions.addWidget(self._clear_btn, 3, 0, 1, 2)
         root.addLayout(actions)
 
         self._status = QLabel("Start the backend, then run one test.")
@@ -152,6 +157,10 @@ class PDCalibrationPage(QWidget):
         self._apply_default_btn.clicked.connect(self._apply_defaults)
         self._save_btn.clicked.connect(self._save_last_result)
         self._clear_btn.clicked.connect(self._clear_tuned_gains)
+
+        # Auto-load saved (or default) gains when the selected robot changes
+        self._robot_id.currentIndexChanged.connect(self._on_robot_changed)
+        self._is_yellow.stateChanged.connect(self._on_robot_changed)
 
     def _gain_spin(self, value, step, decimals=4):
         spin = QDoubleSpinBox()
@@ -249,9 +258,31 @@ class PDCalibrationPage(QWidget):
         self._worker = threading.Thread(target=work, daemon=True)
         self._worker.start()
 
+    def _on_robot_changed(self):
+        """Auto-load saved or default gains when the robot selection changes."""
+        motion = self._motion()
+        gains, source = motion.reload_saved_or_default_gains()
+        self._set_gain_spins(gains)
+        self._update_source_label(source)
+
+    def _update_source_label(self, source: str):
+        if source == "robot":
+            rid = self._robot_id.currentText()
+            team = "yellow" if self._is_yellow.isChecked() else "blue"
+            self._gain_source_lbl.setText(
+                f"Source: movement_calibration.json — robot {team}/{rid} (tuned)")
+            self._gain_source_lbl.setStyleSheet(f"color:{WARNING}; font-size:11px;")
+        else:
+            self._gain_source_lbl.setText(
+                f"Source: constants.py — global defaults "
+                f"(TURN_KP={C.TURN_KP}, LINEAR_KP={C.LINEAR_KP},"
+                f" MAX_W={C.MAX_W:.2f} rad/s cap)")
+            self._gain_source_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+
     def _apply_defaults(self):
         gains = self._motion().apply_default_gains()
         self._set_gain_spins(gains)
+        self._update_source_label("default")
         self._append_log("[cal] Applied constants.py default gains")
 
     def _save_last_result(self):
@@ -259,12 +290,14 @@ class PDCalibrationPage(QWidget):
             self._append_log("[cal] No calibration result to save")
             return
         saved = self._motion().calibrate(self._last_gains, score=self._last_result.score)
+        self._update_source_label("robot")
         self._append_log(f"[cal] Saved gains: {saved}")
 
     def _clear_tuned_gains(self):
         removed = self._motion().clear_tuned_gains()
         gains = self._motion().get_gains()
         self._set_gain_spins(gains)
+        self._update_source_label("default")
         self._append_log(f"[cal] Cleared tuned gains: {removed}; defaults applied")
 
     def _set_gain_spins(self, gains):

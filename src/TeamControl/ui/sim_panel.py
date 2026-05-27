@@ -1,18 +1,14 @@
 """
-Simulation Controls — ball placement, robot teleportation, reset.
-
-Click-to-place integration with the FieldCanvas.
+Simulation controls for grSim ball/robot placement and runtime channels.
 """
 
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                                QGroupBox, QGridLayout, QPushButton,
-                                QDoubleSpinBox, QSpinBox, QComboBox,
-                                QCheckBox)
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
+    QPushButton, QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox,
+)
+from PySide6.QtCore import Signal
 
-from TeamControl.ui.theme import (ACCENT, TEXT_DIM, SUCCESS, DANGER,
-                                   YELLOW_TEAM, BLUE_TEAM)
+from TeamControl.ui.theme import ACCENT
 
 
 class SimPanel(QWidget):
@@ -20,8 +16,8 @@ class SimPanel(QWidget):
 
     place_ball_requested = Signal(float, float, float, float)
     place_robot_requested = Signal(int, bool, float, float, float)
-    field_place_ball = Signal()         # tell field canvas to enter ball-place mode
-    field_place_robot = Signal(int, bool)  # robot-place mode
+    field_place_ball = Signal()
+    field_place_robot = Signal(int, bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -33,15 +29,12 @@ class SimPanel(QWidget):
         title.setStyleSheet(f"font-size:15px; font-weight:bold; color:{ACCENT};")
         lay.addWidget(title)
 
-        # ── Ball placement ────────────────────────────────────────
         ball_box = QGroupBox("Ball Placement")
         bg = QGridLayout(ball_box)
-
         self._ball_x = self._make_spin(-5000, 5000, 0)
         self._ball_y = self._make_spin(-3000, 3000, 0)
         self._ball_vx = self._make_spin(-10000, 10000, 0)
         self._ball_vy = self._make_spin(-10000, 10000, 0)
-
         bg.addWidget(QLabel("X (mm):"), 0, 0)
         bg.addWidget(self._ball_x, 0, 1)
         bg.addWidget(QLabel("Y (mm):"), 0, 2)
@@ -50,13 +43,12 @@ class SimPanel(QWidget):
         bg.addWidget(self._ball_vx, 1, 1)
         bg.addWidget(QLabel("VY:"), 1, 2)
         bg.addWidget(self._ball_vy, 1, 3)
-
         btn_row = QHBoxLayout()
         place_ball = QPushButton("Place Ball")
         place_ball.clicked.connect(self._on_place_ball)
         click_ball = QPushButton("Click on Field")
         click_ball.setStyleSheet(f"color:{ACCENT}; font-weight:bold;")
-        click_ball.clicked.connect(lambda: self.field_place_ball.emit())
+        click_ball.clicked.connect(self.field_place_ball.emit)
         center_ball = QPushButton("Center")
         center_ball.clicked.connect(self._center_ball)
         btn_row.addWidget(place_ball)
@@ -65,18 +57,15 @@ class SimPanel(QWidget):
         bg.addLayout(btn_row, 2, 0, 1, 4)
         lay.addWidget(ball_box)
 
-        # ── Robot placement ───────────────────────────────────────
         robot_box = QGroupBox("Robot Placement")
         rg = QGridLayout(robot_box)
-
         self._robot_team = QComboBox()
         self._robot_team.addItems(["Yellow", "Blue"])
         self._robot_id = QSpinBox()
         self._robot_id.setRange(0, 15)
         self._robot_x = self._make_spin(-5000, 5000, 0)
         self._robot_y = self._make_spin(-3000, 3000, 0)
-        self._robot_o = self._make_spin(-180, 180, 0, suffix="°")
-
+        self._robot_o = self._make_spin(-180, 180, 0, suffix=" deg")
         rg.addWidget(QLabel("Team:"), 0, 0)
         rg.addWidget(self._robot_team, 0, 1)
         rg.addWidget(QLabel("ID:"), 0, 2)
@@ -85,9 +74,8 @@ class SimPanel(QWidget):
         rg.addWidget(self._robot_x, 1, 1)
         rg.addWidget(QLabel("Y (mm):"), 1, 2)
         rg.addWidget(self._robot_y, 1, 3)
-        rg.addWidget(QLabel("θ:"), 2, 0)
+        rg.addWidget(QLabel("Theta:"), 2, 0)
         rg.addWidget(self._robot_o, 2, 1)
-
         rbtn = QHBoxLayout()
         place_robot = QPushButton("Place Robot")
         place_robot.clicked.connect(self._on_place_robot)
@@ -99,22 +87,58 @@ class SimPanel(QWidget):
         rg.addLayout(rbtn, 3, 0, 1, 4)
         lay.addWidget(robot_box)
 
-        # ── Quick actions ─────────────────────────────────────────
         qa = QGroupBox("Quick Actions")
         ql = QVBoxLayout(qa)
-
         reset_btn = QPushButton("Reset Ball to Center")
         reset_btn.clicked.connect(self._center_ball)
-
         kickoff_btn = QPushButton("Kickoff Formation")
         kickoff_btn.setToolTip("Place all robots in kickoff positions")
         kickoff_btn.clicked.connect(self._kickoff_formation)
-
         ql.addWidget(reset_btn)
         ql.addWidget(kickoff_btn)
         lay.addWidget(qa)
 
+        chan_box = QGroupBox("Runtime Channels")
+        cg = QVBoxLayout(chan_box)
+        self._channel_checks = {
+            "vision": QCheckBox("Vision"),
+            "gc": QCheckBox("Game Controller"),
+            "robot_recv": QCheckBox("Robot Telemetry Recv"),
+            "use_grsim": QCheckBox("Use grSim Vision"),
+            "send_grsim": QCheckBox("Send Commands to grSim"),
+            "record_wm": QCheckBox("Record World Model"),
+        }
+        for key, cb in self._channel_checks.items():
+            cb.setChecked(key != "record_wm")
+            cg.addWidget(cb)
+        lay.addWidget(chan_box)
         lay.addStretch()
+
+    def channel_options(self) -> dict:
+        return {key: cb.isChecked() for key, cb in self._channel_checks.items()}
+
+    def set_channel_defaults(self, config):
+        if config is None:
+            return
+        defaults = {
+            "vision": True,
+            "gc": True,
+            "robot_recv": False,
+            "use_grsim": bool(getattr(config, "use_grSim_vision", False)),
+            "send_grsim": bool(getattr(config, "send_to_grSim", False)),
+            "record_wm": bool(getattr(config, "record_world_snapshots", False)),
+        }
+        for key, val in defaults.items():
+            if key in self._channel_checks:
+                self._channel_checks[key].setChecked(val)
+
+    def set_engine_running(self, running: bool):
+        editable = not running
+        for cb in self._channel_checks.values():
+            cb.setEnabled(editable)
+
+    def set_channel_controls_enabled(self, enabled: bool):
+        self.set_engine_running(not enabled)
 
     @staticmethod
     def _make_spin(lo, hi, val, suffix=""):
@@ -156,7 +180,7 @@ class SimPanel(QWidget):
     def _kickoff_formation(self):
         import math
         positions_yellow = [
-            (0, -2200, 0, 0),   # goalie
+            (0, -2200, 0, 0),
             (1, -800, 600, 0),
             (2, -800, -600, 0),
             (3, -200, 0, 0),

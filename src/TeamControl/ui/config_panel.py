@@ -15,15 +15,15 @@ except ImportError:
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                 QTreeWidget, QTreeWidgetItem, QPushButton,
-                                QGroupBox, QCheckBox, QMessageBox,
-                                QHeaderView, QLineEdit)
+                                QGroupBox, QCheckBox, QHeaderView,
+                                QPlainTextEdit, QTabWidget)
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QColor
 
-from TeamControl.ui.theme import ACCENT, TEXT_DIM, SUCCESS, DANGER, WARNING
+from TeamControl.ui.theme import ACCENT, TEXT_DIM, SUCCESS, DANGER
 
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "utils" / "ipconfig.yaml"
+CONSTANTS_PATH = Path(__file__).resolve().parent.parent / "robot" / "constants.py"
 
 
 class ConfigPanel(QWidget):
@@ -41,10 +41,18 @@ class ConfigPanel(QWidget):
         title.setStyleSheet(f"font-size:15px; font-weight:bold; color:{ACCENT};")
         lay.addWidget(title)
 
+        tabs = QTabWidget()
+        lay.addWidget(tabs)
+
+        ip_tab = QWidget()
+        ip_lay = QVBoxLayout(ip_tab)
+        ip_lay.setContentsMargins(0, 0, 0, 0)
+        ip_lay.setSpacing(6)
+
         path_lbl = QLabel(str(CONFIG_PATH))
         path_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
         path_lbl.setWordWrap(True)
-        lay.addWidget(path_lbl)
+        ip_lay.addWidget(path_lbl)
 
         # Tree
         self._tree = QTreeWidget()
@@ -55,7 +63,7 @@ class ConfigPanel(QWidget):
         hh.setSectionResizeMode(1, QHeaderView.Stretch)
         self._tree.setEditTriggers(QTreeWidget.DoubleClicked |
                                     QTreeWidget.EditKeyPressed)
-        lay.addWidget(self._tree)
+        ip_lay.addWidget(self._tree)
 
         # Quick toggles
         tg = QGroupBox("Quick Toggles")
@@ -75,7 +83,7 @@ class ConfigPanel(QWidget):
             cb.setStyleSheet("font-weight:bold;")
             tgl.addWidget(cb)
         tgl.addStretch()
-        lay.addWidget(tg)
+        ip_lay.addWidget(tg)
 
         # Buttons
         btn_row = QHBoxLayout()
@@ -92,10 +100,49 @@ class ConfigPanel(QWidget):
         btn_row.addWidget(self._save_btn)
         btn_row.addStretch()
         btn_row.addWidget(self._status)
-        lay.addLayout(btn_row)
+        ip_lay.addLayout(btn_row)
+
+        tabs.addTab(ip_tab, "ipconfig.yaml")
+
+        constants_tab = QWidget()
+        constants_lay = QVBoxLayout(constants_tab)
+        constants_lay.setContentsMargins(0, 0, 0, 0)
+        constants_lay.setSpacing(6)
+
+        constants_path_lbl = QLabel(str(CONSTANTS_PATH))
+        constants_path_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+        constants_path_lbl.setWordWrap(True)
+        constants_lay.addWidget(constants_path_lbl)
+
+        self._constants_text = QPlainTextEdit()
+        self._constants_text.setReadOnly(True)
+        self._constants_text.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self._constants_text.setStyleSheet("font-family: Consolas, monospace;")
+        constants_lay.addWidget(self._constants_text)
+
+        constants_btn_row = QHBoxLayout()
+        self._reload_constants_btn = QPushButton("Reload")
+        self._reload_constants_btn.clicked.connect(self._load_constants)
+        self._constants_status = QLabel("")
+        self._constants_status.setStyleSheet(f"color:{TEXT_DIM};")
+        constants_btn_row.addWidget(self._reload_constants_btn)
+        constants_btn_row.addStretch()
+        constants_btn_row.addWidget(self._constants_status)
+        constants_lay.addLayout(constants_btn_row)
+
+        tabs.addTab(constants_tab, "constants.py")
 
         self._raw: dict = {}
         self.load()
+        self._load_constants()
+
+    def set_engine_running(self, running: bool):
+        """Disable destructive actions while the engine is running."""
+        from PySide6.QtWidgets import QAbstractItemView
+        self._save_btn.setEnabled(not running)
+        trigger = (QAbstractItemView.NoEditTriggers if running
+                   else QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        self._tree.setEditTriggers(trigger)
 
     # ── IO ────────────────────────────────────────────────────────
 
@@ -124,6 +171,18 @@ class ConfigPanel(QWidget):
 
         self._status.setText("Loaded")
         self._status.setStyleSheet(f"color:{SUCCESS};")
+
+    def _load_constants(self):
+        try:
+            self._constants_text.setPlainText(CONSTANTS_PATH.read_text(encoding="utf-8"))
+        except Exception as e:
+            self._constants_text.clear()
+            self._constants_status.setText(f"Load failed: {e}")
+            self._constants_status.setStyleSheet(f"color:{DANGER};")
+            return
+
+        self._constants_status.setText("Loaded")
+        self._constants_status.setStyleSheet(f"color:{SUCCESS};")
 
     def _populate(self, parent_item, data, path=""):
         if isinstance(data, dict):

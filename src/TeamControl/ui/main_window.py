@@ -58,14 +58,18 @@ class MainWindow(QMainWindow):
         # ── Pages ─────────────────────────────────────────────────
         self._test_panel = TestPanel(engine=self._engine, field=self._field)
         self._dispatch_panel = DispatcherPanel(engine=self._engine)
-        self._calibration = CalibrationPage(
-            engine=self._engine, test_panel=self._test_panel
-        )
         self._pd_calibration = PDCalibrationPage(engine=self._engine)
+        self._calibration = CalibrationPage(
+            engine=self._engine,
+            test_panel=self._test_panel,
+            pd_panel=self._pd_calibration,
+        )
         self._dashboard = DashboardPage(
-            self._field, engine=self._engine, test_panel=self._test_panel
+            self._field, engine=self._engine, test_panel=self._test_panel,
+            calibration_widget=self._calibration,
         )
         self._settings = SettingsPage()
+        self._settings.set_channel_defaults(self._engine.reload_config())
         self._log_panel = LogPanel()
         self._onboard_panel = OnboardPossessionPanel(engine=self._engine)
 
@@ -73,14 +77,15 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         self._tabs.setObjectName("mainTabs")
         self._tabs.setDocumentMode(True)
-        self._tabs.addTab(self._dashboard, "  Dashboard  ")
+
+        # Dashboard is the top-level Home tab (Calibration lives in its right-panel sidebar)
+        self._tabs.addTab(self._dashboard, "  Home  ")
+
         self._tabs.addTab(self._settings, "  Settings  ")
         self._tabs.addTab(self._log_panel, "  Console  ")
         self._tabs.addTab(self._test_panel, "  Hardware Test  ")
         self._tabs.addTab(self._dispatch_panel, "  Dispatcher  ")
-        self._tabs.addTab(self._calibration, "  Calibration  ")
         self._tabs.addTab(self._onboard_panel, "  Onboard Possession  ")
-        self._tabs.addTab(self._pd_calibration, "  PD Calibration  ")
         self.setCentralWidget(self._tabs)
 
         # ── Toolbar ──────────────────────────────────────────────
@@ -218,10 +223,13 @@ class MainWindow(QMainWindow):
         view_menu = mb.addMenu("View")
         view_menu.addAction("Reset Field View", self._reset_field_view)
         view_menu.addSeparator()
-        for i, name in enumerate(["PD Calibration"]):
-            view_menu.addAction(
-                name, lambda checked=False, idx=i: self._tabs.setCurrentIndex(idx)
-            )
+        view_menu.addAction(
+            "Calibration",
+            lambda checked=False: (
+                self._tabs.setCurrentWidget(self._dashboard),
+                self._dashboard._sidebar_tabs.setCurrentIndex(2),
+            ),
+        )
 
         sim_menu = mb.addMenu("Simulation")
         sim_menu.addAction("Center Ball", lambda: self._engine.place_ball(0, 0))
@@ -255,9 +263,9 @@ class MainWindow(QMainWindow):
         eng = self._engine
 
         eng.frame_ready.connect(self._on_frame)
-        eng.field_geometry_ready.connect(self._field.set_field_size)
         eng.game_state_ready.connect(self._dashboard.update_game_state)
         eng.dispatch_info.connect(self._dispatch_panel.update_info)
+        eng.channel_status_ready.connect(self._dashboard.update_channel_status)
         eng.engine_started.connect(self._on_engine_started)
         eng.engine_stopped.connect(self._on_engine_stopped)
         eng.log_message.connect(self._log_panel.append)
@@ -282,6 +290,11 @@ class MainWindow(QMainWindow):
         )
         self._field.point_picked.connect(self._test_panel.go_to_point)
         self._field.action_requested.connect(self._test_panel.field_action)
+        self._field.robot_selected.connect(self._dashboard.select_robot)
+        self._field.robot_selected.connect(self._test_panel.select_robot)
+
+        self._dashboard.robot_action.connect(self._on_dashboard_action)
+        self._dashboard.pick_goto_point.connect(self._on_dashboard_pick_goto_point)
 
         self._settings.config_panel.config_changed.connect(
             lambda: self._log_panel.append("[config] Configuration saved")
@@ -300,7 +313,12 @@ class MainWindow(QMainWindow):
             f"[engine] Starting {mode} — our bot #{our_id}, opp bot #{opp_id}"
         )
         try:
-            self._engine.start(mode, our_id=our_id, opp_id=opp_id)
+            self._engine.start(
+                mode,
+                our_id=our_id,
+                opp_id=opp_id,
+                channel_options=self._settings.channel_options(),
+            )
         except Exception as e:
             self._log_panel.append(f"[error] Failed to start: {e}")
 
@@ -314,16 +332,10 @@ class MainWindow(QMainWindow):
         if self._engine.is_running:
             self._engine.stop()
         self._engine.start(
-            mode, our_id=self._our_id_spin.value(), opp_id=self._opp_id_spin.value()
-        )
-
-    def _switch_mode(self, mode):
-        idx = SimEngine.MODES.index(mode)
-        self._mode_combo.setCurrentIndex(idx)
-        if self._engine.is_running:
-            self._engine.stop()
-        self._engine.start(
-            mode, our_id=self._our_id_spin.value(), opp_id=self._opp_id_spin.value()
+            mode,
+            our_id=self._our_id_spin.value(),
+            opp_id=self._opp_id_spin.value(),
+            channel_options=self._settings.channel_options(),
         )
 
     def _on_engine_started(self, mode):
@@ -337,6 +349,7 @@ class MainWindow(QMainWindow):
         self._status_mode.setText(f"Mode: {mode}")
         self._dashboard.set_mode(mode)
         self._dashboard.set_engine_running(True)
+        self._settings.set_engine_running(True)
         self._dispatch_panel.set_running(True)
 
     def _on_engine_stopped(self):
@@ -349,12 +362,21 @@ class MainWindow(QMainWindow):
         self._state_label.setStyleSheet(f"color:{TEXT_DIM};")
         self._status_mode.setText("Mode: —")
         self._dashboard.set_engine_running(False)
+        self._settings.set_engine_running(False)
         self._dispatch_panel.set_running(False)
 
     def _on_frame(self, snap):
         self._dashboard.update_frame(snap)
         fps = self._dashboard.get_fps()
         self._status_fps.setText(f"{fps} fps")
+
+    def _on_dashboard_action(self, is_yellow: bool, robot_id: int, action: str):
+        self._test_panel.select_robot(is_yellow, robot_id)
+        self._test_panel.start_action(action)
+
+    def _on_dashboard_pick_goto_point(self, is_yellow: bool, robot_id: int):
+        self._test_panel.select_robot(is_yellow, robot_id)
+        self._test_panel._pick_goto_point()
 
     def _on_coord_hover(self, x, y):
         self._status_coords.setText(f"({x:.0f}, {y:.0f}) mm")

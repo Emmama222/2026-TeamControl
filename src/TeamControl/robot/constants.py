@@ -16,8 +16,10 @@ _TUNING_PATH = os.path.normpath(_TUNING_PATH)
 
 def _load_tuning():
     defaults = {
+        "max_speed": 5.0,
         "max_w_raw": 0.5,
         "w_clamp_pct": 0.60,
+        "manual_max_w": 10.0,
         "turn_gain": 0.8,
         "face_ball_gain": 0.8,
         "path_planner_gain": 0.8,
@@ -70,7 +72,9 @@ DEFENSE_HALF_WIDTH = 1200
 
 ROBOT_RADIUS      = 90       # mm
 
-MAX_SPEED         = 1.0      # m/s — absolute hardware speed limit
+MAX_SPEED         = _t["max_speed"]      # m/s - command speed ceiling
+MANUAL_MAX_SPEED  = MAX_SPEED
+MANUAL_MAX_W      = _t["manual_max_w"]
 
 _MAX_W_RAW        = _t["max_w_raw"]
 W_CLAMP_PCT       = _t["w_clamp_pct"]
