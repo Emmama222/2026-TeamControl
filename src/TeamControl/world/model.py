@@ -54,9 +54,21 @@ class WorldModel:
         self.field:FieldSize = None
         self._version = mgr.Value('i', 0)   # int counter
         self._state = None # current state from GC
+        self._gc_status = {
+            "stage": None,
+            "command": None,
+            "state": None,
+            "us_yellow": us_yellow,
+            "us_positive": us_positive,
+            "packet_timestamp": None,
+            "received_at": None,
+        }
         self.robot_active = 6 # robots active
         self.blf_location = None # ball left field location
         self._onboard_store = {}  # (is_yellow, robot_id) -> OnboardObservation
+
+    def _bump_version(self):
+        self._version.value += 1
     
     def update_game_data(self,game_data):
         if game_data is None:
@@ -97,6 +109,8 @@ class WorldModel:
                 self.update_robots_active(data)
             case PacketType.NEW_STATE:
                 self.update_state(data)
+            case PacketType.GC_STATUS:
+                self.update_gc_status(data)
             case PacketType.SWITCH_TEAM:
                 self.update_team(data["YELLOW"], data["POSITIVE"])
             case PacketType.BLF_LOCATION:
@@ -107,23 +121,50 @@ class WorldModel:
             
     def update_robots_active(self,new_active) : 
         self.robot_active = new_active
+        self._bump_version()
     
     def update_state(self,new_state):
         # when we have a new incoming state, it updates this
         self._state = new_state 
+        self._gc_status["state"] = new_state
+        self._bump_version()
 
     def update_team(self, us_yellow: bool, us_positive: bool):
         self._us_yellow = us_yellow
         self._us_positive = us_positive
+        self._gc_status["us_yellow"] = us_yellow
+        self._gc_status["us_positive"] = us_positive
+        self._bump_version()
 
     def update_ball_left_field_location(self, location):
         self.blf_location = location
+        self._bump_version()
+
+    def update_gc_status(self, status):
+        if status is None:
+            return
+        self._gc_status.update(status)
+        state = status.get("state")
+        if state is not None:
+            self._state = state
+        if "us_yellow" in status:
+            self._us_yellow = status["us_yellow"]
+        if "us_positive" in status:
+            self._us_positive = status["us_positive"]
+        self._bump_version()
 
     def get_ball_left_field_location(self):
         return self.blf_location
     
     def get_game_state(self):
         return self._state
+
+    def get_gc_status(self):
+        status = dict(self._gc_status)
+        status["state"] = self._state
+        status["us_yellow"] = self._us_yellow
+        status["us_positive"] = self._us_positive
+        return status
 
     def us_yellow(self):
         return self._us_yellow
