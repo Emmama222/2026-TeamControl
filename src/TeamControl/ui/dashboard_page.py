@@ -381,6 +381,19 @@ class DashboardPage(QWidget):
         self._gs_us_yellow = _val_label("NO DATA")
         grid.addWidget(self._gs_us_yellow, 5, 1)
 
+        grid.addWidget(QLabel("Cards:"), 6, 0)
+        self._gs_cards = _val_label("NO DATA")
+        grid.addWidget(self._gs_cards, 6, 1)
+
+        grid.addWidget(QLabel("Fouls:"), 7, 0)
+        self._gs_fouls = _val_label("NO DATA")
+        grid.addWidget(self._gs_fouls, 7, 1)
+
+        grid.addWidget(QLabel("YC Timers:"), 8, 0)
+        self._gs_yellow_card_times = _val_label("NO DATA", size=10)
+        self._gs_yellow_card_times.setWordWrap(True)
+        grid.addWidget(self._gs_yellow_card_times, 8, 1)
+
         lay.addLayout(grid)
         parent_lay.addWidget(card)
 
@@ -416,6 +429,8 @@ class DashboardPage(QWidget):
             color = YELLOW_TEAM if us_yellow else BLUE_TEAM
             self._gs_us_yellow.setStyleSheet(f"color:{color}; font-weight:bold;")
 
+        self._update_gc_discipline(gc_status)
+
     def _set_gc_value(self, label, value):
         if value is None:
             label.setText("NO DATA")
@@ -423,6 +438,43 @@ class DashboardPage(QWidget):
             return
         label.setText(value.name if hasattr(value, "name") else str(value))
         label.setStyleSheet(f"color:{TEXT}; font-weight:bold;")
+
+    def _update_gc_discipline(self, gc_status):
+        yellow_cards = gc_status.get("yellow_cards")
+        red_cards = gc_status.get("red_cards")
+        fouls = gc_status.get("fouls")
+        timers = gc_status.get("yellow_card_times") or []
+
+        if yellow_cards is None and red_cards is None:
+            self._gs_cards.setText("NO DATA")
+            self._gs_cards.setStyleSheet(f"color:{TEXT_DIM};")
+        else:
+            yellow_text = "?" if yellow_cards is None else str(yellow_cards)
+            red_text = "?" if red_cards is None else str(red_cards)
+            self._gs_cards.setText(f"Y {yellow_text} / R {red_text}")
+            color = DANGER if red_cards else WARNING if yellow_cards else SUCCESS
+            self._gs_cards.setStyleSheet(f"color:{color}; font-weight:bold;")
+
+        if fouls is None:
+            self._gs_fouls.setText("NO DATA")
+            self._gs_fouls.setStyleSheet(f"color:{TEXT_DIM};")
+        else:
+            self._gs_fouls.setText(str(fouls))
+            self._gs_fouls.setStyleSheet(f"color:{WARNING if fouls else SUCCESS}; font-weight:bold;")
+
+        if not timers:
+            self._gs_yellow_card_times.setText("NONE")
+            self._gs_yellow_card_times.setStyleSheet(f"color:{TEXT_DIM};")
+        else:
+            self._gs_yellow_card_times.setText(", ".join(self._format_gc_time(t) for t in timers))
+            self._gs_yellow_card_times.setStyleSheet(f"color:{WARNING}; font-weight:bold;")
+
+    def _format_gc_time(self, value):
+        try:
+            seconds = max(0, int(value) // 1_000_000)
+        except (TypeError, ValueError):
+            return str(value)
+        return f"{seconds // 60}:{seconds % 60:02d}"
 
     def set_mode(self, mode):
         self._current_mode = mode

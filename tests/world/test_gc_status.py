@@ -16,6 +16,10 @@ def test_world_model_updates_gc_status_and_version():
                 "state": GameState.STOPPED,
                 "us_yellow": False,
                 "us_positive": True,
+                "yellow_cards": 1,
+                "red_cards": 0,
+                "fouls": 2,
+                "yellow_card_times": [120_000_000],
                 "packet_timestamp": 123,
                 "received_at": 456.0,
             },
@@ -28,6 +32,10 @@ def test_world_model_updates_gc_status_and_version():
     assert status["state"] == GameState.STOPPED
     assert status["us_yellow"] is False
     assert status["us_positive"] is True
+    assert status["yellow_cards"] == 1
+    assert status["red_cards"] == 0
+    assert status["fouls"] == 2
+    assert status["yellow_card_times"] == [120_000_000]
     assert wm.get_game_state() == GameState.STOPPED
     assert wm.get_version() > before
 

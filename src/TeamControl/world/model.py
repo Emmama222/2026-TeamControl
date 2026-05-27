@@ -60,6 +60,10 @@ class WorldModel:
             "state": None,
             "us_yellow": us_yellow,
             "us_positive": us_positive,
+            "yellow_cards": None,
+            "red_cards": None,
+            "fouls": None,
+            "yellow_card_times": [],
             "packet_timestamp": None,
             "received_at": None,
         }

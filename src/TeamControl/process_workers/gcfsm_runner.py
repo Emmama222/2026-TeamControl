@@ -220,6 +220,12 @@ class GCfsm (BaseWorker):
             self.current_state = state
 
     def forward_gc_status(self, new_ref_msg: RefereeMessage):
+        our_info = None
+        if self.us_yellow is True:
+            our_info = new_ref_msg.yellow
+        elif self.us_yellow is False:
+            our_info = new_ref_msg.blue
+
         packet = (
             PacketType.GC_STATUS,
             {
@@ -228,6 +234,10 @@ class GCfsm (BaseWorker):
                 "state": self.current_state,
                 "us_yellow": self.us_yellow,
                 "us_positive": self.us_positive,
+                "yellow_cards": None if our_info is None else our_info.yellow_cards,
+                "red_cards": None if our_info is None else our_info.red_cards,
+                "fouls": None if our_info is None else our_info.foul_counter,
+                "yellow_card_times": [] if our_info is None else list(our_info.yellow_card_times),
                 "packet_timestamp": new_ref_msg.packet_timestamp,
                 "received_at": time.time(),
             },
