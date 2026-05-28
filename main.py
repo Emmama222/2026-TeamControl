@@ -3,7 +3,7 @@
 import argparse
 import sys
 import time
-from multiprocessing import Process, Queue, Event
+from multiprocessing import Process, Queue, Event, freeze_support
 
 from TeamControl.process_workers.vision_runner import VisionProcess
 from TeamControl.process_workers.gcfsm_runner import GCfsm
@@ -24,6 +24,7 @@ from TeamControl.robot.coop import run_coop
 
 
 def main():
+	freeze_support()
     parser = argparse.ArgumentParser(
         description="RoboCup SSL Team Control — multi-mode launcher",
     )
