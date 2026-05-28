@@ -66,7 +66,6 @@ class MainWindow(QMainWindow):
         )
         self._dashboard = DashboardPage(
             self._field, engine=self._engine, test_panel=self._test_panel,
-            calibration_widget=self._calibration,
         )
         self._settings = SettingsPage()
         self._settings.set_channel_defaults(self._engine.reload_config())
@@ -78,9 +77,9 @@ class MainWindow(QMainWindow):
         self._tabs.setObjectName("mainTabs")
         self._tabs.setDocumentMode(True)
 
-        # Dashboard is the top-level Home tab (Calibration lives in its right-panel sidebar)
+        # Dashboard is the top-level Home tab; Calibration has its own main tab.
         self._tabs.addTab(self._dashboard, "  Home  ")
-
+        self._tabs.addTab(self._calibration, "  Calibration  ")
         self._tabs.addTab(self._settings, "  Settings  ")
         self._tabs.addTab(self._log_panel, "  Console  ")
         self._tabs.addTab(self._test_panel, "  Hardware Test  ")
@@ -225,10 +224,7 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(
             "Calibration",
-            lambda checked=False: (
-                self._tabs.setCurrentWidget(self._dashboard),
-                self._dashboard._sidebar_tabs.setCurrentIndex(2),
-            ),
+            lambda checked=False: self._tabs.setCurrentWidget(self._calibration),
         )
 
         sim_menu = mb.addMenu("Simulation")

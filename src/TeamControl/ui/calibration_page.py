@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton, QFrame, QDoubleSpinBox, QSpinBox, QComboBox,
     QPlainTextEdit, QProgressBar, QScrollArea, QGridLayout,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont
 
 from TeamControl.ui.theme import (
@@ -80,6 +80,28 @@ def _val_label(text="—"):
     return lbl
 
 
+class _SquareFieldContainer(QWidget):
+    """Keep the calibration field canvas square inside the splitter pane."""
+
+    def __init__(self, field: FieldCanvas, parent=None):
+        super().__init__(parent)
+        self._field = field
+        self._field.setParent(self)
+        self._field.setMinimumSize(0, 0)
+        self.setMinimumSize(520, 520)
+        self.setStyleSheet(f"background:{BG_DARK};")
+
+    def resizeEvent(self, event):
+        side = min(self.width(), self.height())
+        x = (self.width() - side) // 2
+        y = (self.height() - side) // 2
+        self._field.setGeometry(x, y, side, side)
+        super().resizeEvent(event)
+
+    def sizeHint(self):
+        return QSize(760, 760)
+
+
 class CalibrationPage(QWidget):
     """Calibration tab — auto-learn speed scale and drift correction."""
 
@@ -103,7 +125,8 @@ class CalibrationPage(QWidget):
 
         # Left: field canvas (separate widget from Dashboard — must wire signals here)
         self._field = FieldCanvas()
-        splitter.addWidget(self._field)
+        field_box = _SquareFieldContainer(self._field)
+        splitter.addWidget(field_box)
         if self._test_panel is not None:
             self._field.point_picked.connect(self._test_panel.go_to_point)
             self._field.action_requested.connect(self._test_panel.field_action)

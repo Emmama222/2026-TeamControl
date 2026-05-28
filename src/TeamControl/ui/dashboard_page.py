@@ -51,7 +51,7 @@ class DashboardPage(QWidget):
     pick_goto_point = Signal(bool, int)     # is_yellow, robot_id
 
     def __init__(self, field_canvas, parent=None, engine=None,
-                 test_panel=None, calibration_widget=None):
+                 test_panel=None):
         super().__init__(parent)
         self._field = field_canvas
         self._engine = engine
@@ -71,9 +71,6 @@ class DashboardPage(QWidget):
 
         self._sidebar_tabs.addTab(self._build_monitor_tab(), "Monitor")
         self._sidebar_tabs.addTab(self._build_controls_tab(), "Controls")
-
-        if calibration_widget is not None:
-            self._sidebar_tabs.addTab(calibration_widget, "Calibration")
 
         splitter.addWidget(self._sidebar_tabs)
         splitter.setStretchFactor(0, 4)
