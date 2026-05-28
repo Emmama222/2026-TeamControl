@@ -145,6 +145,9 @@ BLEND_DIST        = 300.0                # mm — below this, full rotation allo
 MIN_V             = 0.0    # m/s   — minimum linear command (dead-zone floor)
 MIN_W             = 0.0    # rad/s — minimum angular command (dead-zone floor)
 
+LINEAR_AMAX       = 2.105  # m/s²   — max linear acceleration / deceleration
+ANGULAR_AMAX      = 28.4   # rad/s² — max angular acceleration / deceleration
+
 # Threshold zones for go_to_target (mm)
 KICKER_ZONE        = 70       # below this, speed is 0
 DRIBBLE_ZONE       = 400      # below this, speed is capped to DRIBBLE_SPEED_FRAC
