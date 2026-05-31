@@ -1,106 +1,422 @@
-from typing import Optional
-from TeamControl.world.map.obstacles import Obstacles
+from dataclasses import dataclass
+from math import hypot
+import time
+from typing import Iterable, Optional
 
-R = 90.0 # mm -  robot Radius
+from TeamControl.world.map.geometry import linear_velocity
+from TeamControl.world.map.obstacles import Obstacle
+
+
+R = 90.0  # mm - robot radius
+BALL_MIN_CONFIDENCE = 0.1
+BALL_BASE_TOLERANCE_MM = 150.0
+BALL_TOLERANCE_RATE_MMPS = 7000.0
+
+
+@dataclass(frozen=True, slots=True)
+class PlanningObstacle:
+    """Immutable predicted obstacle passed to a planner."""
+
+    robot_id: int
+    team_is_yellow: bool
+    pos_mm: tuple[float, float]
+    radius_mm: float
+    vel_mmps: tuple[float, float]
+    observation_age_ms: float
+    prediction_horizon_ms: float
+
+
 class WorldMap:
-    def __init__(self, horizon_ms=20,field=None, snapshot=None) -> None:
-        self.horizon_ms = horizon_ms #ms
-        self.update(snapshot,field)
+    def __init__(self, horizon_ms=20, field=None, snapshot=None) -> None:
+        self.horizon_ms = horizon_ms
+        self.field = None
+        self.robots: dict[tuple[bool, int], Obstacle] = {}
+        self.ball: tuple[float, float] | None = None
+        self.ball_vel_mmps = (0.0, 0.0)
+        self._ball_timestamp: float | None = None
+        self.ball_visible = False
+        self.ball_last_seen_s: float | None = None
+        self.last_rejected_ball_pos_mm: tuple[float, float] | None = None
+        self.last_ball_rejection_reason: str | None = None
+        self.possible_ball_left_field_pos_mm: tuple[float, float] | None = None
+        self.ball_left_field_pos_mm: tuple[float, float] | None = None
+        self.obs: list[Obstacle] = []
 
-    def update(self, snapshot,field=None) -> None:
         if field is not None:
-            self.field = self._create_field(field)
+            self._create_field(field)
+
         if snapshot is not None:
-            self.obs = self._create_obs_from_snap(snapshot)
-        
+            self.update(snapshot)
 
-    def _create_field(self,field):
-        pass
-    
-    def _create_obs_from_snap(self,snapshot):
-        pass
-        
-    def get_render_data(self):
-        pass
+    def update(self, snapshot, field=None) -> None:
+        if field is not None:
+            self._create_field(field)
+        if snapshot is not None:
+            self._extract_from_snap(snapshot)
 
-    def get_all_obs(self):
+    # -------------------------
+    # Map creation
+    # -------------------------
+    def _create_field(self, field) -> None:
+        self.field = field
+
+    def _extract_from_snap(self, snapshot) -> None:
+        timestamp = float(snapshot.timestamp)
+        robots = (
+            robot
+            for team in (snapshot.yellow, snapshot.blue)
+            for robot in team
+            if robot is not None
+        )
+        self.obs = self.robots2obs(robots, timestamp)
+        self.robots = {
+            (obs.team_is_yellow, obs.robot_id): obs
+            for obs in self.obs
+        }
+        ball_candidates = getattr(snapshot, "ball_candidates", ())
+        if not ball_candidates and snapshot.ball is not None:
+            ball_candidates = (snapshot.ball,)
+        self._update_ball_candidates(ball_candidates, timestamp)
+        if snapshot.ball_left_field is not None:
+            self.ball_left_field_pos_mm = snapshot.ball_left_field
+
+    def robots2obs(self, robots: Iterable, timestamp: float) -> list[Obstacle]:
+        obstacles = []
+        for robot in robots:
+            obs = Obstacle(
+                timestamp=timestamp,
+                robot_id=robot.id,
+                team_is_yellow=robot.isYellow,
+                pos_mm=robot.pose,
+            )
+            older_obs = self.robots.get((obs.team_is_yellow, obs.robot_id))
+            if older_obs is not None and older_obs.timestamp < obs.timestamp:
+                obs.update_vel_from(older_obs)
+            obstacles.append(obs)
+        return obstacles
+
+    def _update_ball_candidates(self, balls, timestamp: float) -> None:
+        balls = tuple(balls)
+        if not balls:
+            self.ball_visible = False
+            return
+
+        confident = [
+            ball
+            for ball in balls
+            if float(getattr(ball, "confidence", 1.0)) >= BALL_MIN_CONFIDENCE
+        ]
+        if not confident:
+            self.last_rejected_ball_pos_mm = balls[0].position
+            self.last_ball_rejection_reason = "low_confidence"
+            self.ball_visible = False
+            return
+
+        in_field = [
+            ball
+            for ball in confident
+            if self._is_ball_in_field(ball.position)
+        ]
+        if not in_field:
+            position = max(
+                confident,
+                key=lambda ball: float(getattr(ball, "confidence", 1.0)),
+            ).position
+            self.possible_ball_left_field_pos_mm = position
+            self.last_rejected_ball_pos_mm = position
+            self.last_ball_rejection_reason = "out_of_bounds"
+            self.ball_visible = False
+            return
+
+        dt_s = None
+        predicted = None
+        if (
+            self.ball is not None
+            and self._ball_timestamp is not None
+            and self._ball_timestamp < timestamp
+        ):
+            dt_s = timestamp - self._ball_timestamp
+            predicted = self._predict_ball(dt_s)
+            allowed_error_mm = (
+                BALL_BASE_TOLERANCE_MM
+                + BALL_TOLERANCE_RATE_MMPS * dt_s
+            )
+            plausible = [
+                ball
+                for ball in in_field
+                if self._distance_to_ball_prediction(ball.position, predicted)
+                <= allowed_error_mm
+            ]
+            if not plausible:
+                closest = min(
+                    in_field,
+                    key=lambda ball: self._distance_to_ball_prediction(
+                        ball.position,
+                        predicted,
+                    ),
+                )
+                self.last_rejected_ball_pos_mm = closest.position
+                self.last_ball_rejection_reason = "trajectory_error"
+                self.ball_visible = False
+                return
+        else:
+            plausible = in_field
+
+        ball = max(
+            plausible,
+            key=lambda candidate: self._ball_candidate_rank(candidate, predicted),
+        )
+        position = ball.position
+        if dt_s is None:
+            self.ball_vel_mmps = (0.0, 0.0)
+        else:
+            self.ball_vel_mmps = (
+                linear_velocity(self.ball[0], position[0], dt_s),
+                linear_velocity(self.ball[1], position[1], dt_s),
+            )
+        self.ball = position
+        self._ball_timestamp = timestamp
+        self.ball_last_seen_s = timestamp
+        self.ball_visible = True
+        self.last_rejected_ball_pos_mm = None
+        self.last_ball_rejection_reason = None
+
+    def _ball_candidate_rank(self, ball, predicted) -> tuple[float, float]:
+        confidence = float(getattr(ball, "confidence", 1.0))
+        if predicted is None:
+            return confidence, 0.0
+        distance = self._distance_to_ball_prediction(ball.position, predicted)
+        return confidence, -distance
+
+    def _distance_to_ball_prediction(
+        self,
+        position: tuple[float, float],
+        predicted: tuple[float, float],
+    ) -> float:
+        return hypot(
+            position[0] - predicted[0],
+            position[1] - predicted[1],
+        )
+
+    def _predict_ball(self, dt_s: float) -> tuple[float, float]:
+        return (
+            self.ball[0] + self.ball_vel_mmps[0] * dt_s,
+            self.ball[1] + self.ball_vel_mmps[1] * dt_s,
+        )
+
+    def _is_ball_in_field(self, position: tuple[float, float]) -> bool:
+        if self.field is None:
+            return True
+        half_length = self.field.field_length / 2.0
+        half_width = self.field.field_width / 2.0
+        return (
+            -half_length <= position[0] <= half_length
+            and -half_width <= position[1] <= half_width
+        )
+
+    def ball_age_s(self, now_s: float | None = None) -> float | None:
+        """Return seconds since the latest accepted ball observation."""
+        if self.ball_last_seen_s is None:
+            return None
+        if now_s is None:
+            now_s = time.time()
+        return max(0.0, now_s - self.ball_last_seen_s)
+
+    # -------------------------
+    # Render/debug
+    # -------------------------
+    def get_render_data(self, now_s=None, horizon_ms=250, extra_layers=()):
+        """Return serializable, toggleable layers for a debug renderer."""
+        from TeamControl.world.map.renderer import Renderer
+
+        return Renderer(prediction_horizon_ms=horizon_ms).render(
+            self,
+            now_s=now_s,
+            extra_layers=extra_layers,
+        )
+
+    # -------------------------
+    # Trajectory queries
+    # -------------------------
+    def get_robot_trajectory(
+        self,
+        robot_id: int,
+        team_is_yellow: bool,
+        horizon_ms: int | float | None = None,
+    ) -> tuple[tuple[float, float], tuple[float, float]] | None:
+        obs = self._get_robot_obstacle(robot_id, team_is_yellow)
+        if obs is None:
+            return None
+        if horizon_ms is None:
+            horizon_ms = self.horizon_ms
+        return obs.predicted_pos(horizon_ms), obs.vel_mmps
+
+    def get_ball_trajectory(
+        self,
+        horizon_ms: int | float | None = None,
+    ) -> tuple[tuple[float, float], tuple[float, float]] | None:
+        if self.ball is None:
+            return None
+        if horizon_ms is None:
+            horizon_ms = self.horizon_ms
+        if horizon_ms < 0:
+            raise ValueError("horizon_ms must be non-negative")
+        dt_s = horizon_ms / 1000.0
+        return (
+            (
+                self.ball[0] + self.ball_vel_mmps[0] * dt_s,
+                self.ball[1] + self.ball_vel_mmps[1] * dt_s,
+            ),
+            self.ball_vel_mmps,
+        )
+
+    # -------------------------
+    # Obstacle queries
+    # -------------------------
+    def get_obstacles(self) -> list[Obstacle]:
         return self.obs
 
-    def find_closest_robot(self,start_pos, team_is_yellow:Optional[bool]=None) -> tuple[int, list[float]]:
-        """locate the closest robot to start_pos base (optional: on team color
-        """
+    def get_planning_obstacles(
+        self,
+        now_s: float | None = None,
+        horizon_ms: int | float | None = None,
+        ignore_robots: set[tuple[bool, int]] | None = None,
+    ) -> tuple[PlanningObstacle, ...]:
+        """Return an immutable, age-adjusted obstacle view for path planning."""
+        if now_s is None:
+            now_s = time.time()
+        if horizon_ms is None:
+            horizon_ms = self.horizon_ms
+        if horizon_ms < 0:
+            raise ValueError("horizon_ms must be non-negative")
+        if ignore_robots is None:
+            ignore_robots = set()
 
-        robot_id = 0
-        robot_pos = [0.0, 0.0, 0.0]
-        return (robot_id, robot_pos)  # return the closest robotid, located at pos
+        planning_obstacles = []
+        for obs in self.obs:
+            if (obs.team_is_yellow, obs.robot_id) in ignore_robots:
+                continue
+            age_ms = max(0.0, (now_s - obs.timestamp) * 1000.0)
+            prediction_horizon_ms = age_ms + horizon_ms
+            planning_obstacles.append(
+                PlanningObstacle(
+                    robot_id=obs.robot_id,
+                    team_is_yellow=obs.team_is_yellow,
+                    pos_mm=obs.predicted_pos(prediction_horizon_ms),
+                    radius_mm=obs.dynamic_radius(prediction_horizon_ms),
+                    vel_mmps=obs.vel_mmps,
+                    observation_age_ms=age_ms,
+                    prediction_horizon_ms=prediction_horizon_ms,
+                )
+            )
+        return tuple(planning_obstacles)
+
+    def find_closest_robot_to(
+        self,
+        start_pos: tuple[float, float],
+        team_is_yellow: Optional[bool] = None,
+    ) -> tuple[int, tuple[float, float, float]] | None:
+        """Locate the closest robot to start_pos, optionally filtered by team."""
+        closest = None
+        closest_dist = float("inf")
+
+        for obs in self.obs:
+            if team_is_yellow is not None and obs.team_is_yellow != team_is_yellow:
+                continue
+            dist = obs.dist_to(start_pos)
+            if dist < closest_dist:
+                closest_dist = dist
+                closest = obs
+
+        if closest is None:
+            return None
+        return closest.robot_id, closest.pos_mm
 
     def get_nearby_teammates(
-        self, robot_id: int, team_is_yellow: bool, distance: int = 500
+        self,
+        robot_id: int,
+        team_is_yellow: bool,
+        radius_mm: float = 500,
     ) -> list[int]:
-        """
-        Base on current RobotID and TeamIsYellow, within the distance range, get the sorted nearby teammate
-        returns a list of sorted teammates robot_ids base on location relative to robot
-        """
-        return []
+        """Return sorted teammate robot IDs within radius_mm."""
+        robot = self._get_robot_obstacle(robot_id, team_is_yellow)
+        if robot is None:
+            return []
 
-    def get_nearby_enemy(self, robot_id: int, team_is_yellow: bool, distance: int = 500) -> list[int]:
-        """
-        Base on current RobotID and TeamIsYellow, within the distance range, get the sorted nearby enemy
-        returns a list of sorted enemies robot_ids base on location relative to robot
-        defaults 50 mm
-        """
-        return []
-    
-    def distance_2_segment(
-            point: tuple[float, float],
-            start: tuple[float, float],
-            end: tuple[float, float],
-        ) -> float:
-            """Return shortest distance from point to line segment start-end."""
-            px, py = point
-            sx, sy = start
-            ex, ey = end
-
-            dx = ex - sx
-            dy = ey - sy
-
-            # Start and end are the same point
-            if dx == 0 and dy == 0:
-                return hypot(px - sx, py - sy)
-
-            # Project point onto line segment
-            t = ((px - sx) * dx + (py - sy) * dy) / (dx * dx + dy * dy)
-
-            # Clamp projection to segment
-            t = max(0.0, min(1.0, t))
-
-            closest_x = sx + t * dx
-            closest_y = sy + t * dy
-
-            return hypot(px - closest_x, py - closest_y)
-    
-    def is_path_free(self, start_pos, end_pos, ignored:set[int,bool]|None=None, clearance:int=0) -> bool:
-        
-        """
-        Return True if no obstacle overlaps the robot path corridor.
-
-        clearance:
-            Extra required clearance in mm.
-            0 means just avoid physical/safe-radius collision.
-        """
-        if ignored is None:
-            ignored = set()
-
-        for obs in self.obstacles:
-            if (obs.id,obs.team_is_yellow) in ignored:
+        nearby = []
+        for obs in self.obs:
+            if obs.robot_id == robot_id and obs.team_is_yellow == team_is_yellow:
                 continue
-            dist = self.distance_2_segment(point = obs.pos_mm, start=start_pos,end=end_pos )
-            actual_clearance = dist -R- obs.safe_radius
-            if max_clearance < clearance: 
+            if obs.team_is_yellow != team_is_yellow:
+                continue
+            dist = robot.dist_to(obs.pos_mm[:2])
+            if dist <= radius_mm:
+                nearby.append((dist, obs.robot_id))
+
+        nearby.sort(key=lambda item: item[0])
+        return [nearby_robot_id for _, nearby_robot_id in nearby]
+
+    def get_nearby_enemies(
+        self,
+        robot_id: int,
+        team_is_yellow: bool,
+        radius_mm: float = 500,
+    ) -> list[int]:
+        """Return sorted enemy robot IDs within radius_mm."""
+        robot = self._get_robot_obstacle(robot_id, team_is_yellow)
+        if robot is None:
+            return []
+
+        nearby = []
+        for obs in self.obs:
+            if obs.team_is_yellow == team_is_yellow:
+                continue
+            dist = robot.dist_to(obs.pos_mm[:2])
+            if dist <= radius_mm:
+                nearby.append((dist, obs.robot_id))
+
+        nearby.sort(key=lambda item: item[0])
+        return [nearby_robot_id for _, nearby_robot_id in nearby]
+
+    def _get_robot_obstacle(
+        self,
+        robot_id: int,
+        team_is_yellow: bool,
+    ) -> Obstacle | None:
+        return self.robots.get((team_is_yellow, robot_id))
+
+    def is_path_free(
+        self,
+        start_pos: tuple[float, float],
+        end_pos: tuple[float, float],
+        ignore_robots: set[tuple[bool, int]] | None = None,
+        clearance: float = 0.0,
+        horizon_ms: int | float | None = None,
+    ) -> bool:
+        if ignore_robots is None:
+            ignore_robots = set()
+        if horizon_ms is None:
+            horizon_ms = self.horizon_ms
+
+        for obs in self.obs:
+            if (obs.team_is_yellow, obs.robot_id) in ignore_robots:
+                continue
+            if obs.intersects_path(
+                start_pos_mm=start_pos,
+                end_pos_mm=end_pos,
+                extra_clearance_mm=clearance,
+                horizon_ms=horizon_ms,
+            ):
                 return False
-        
         return True
 
-    def is_target_in_box(self, target_pos, x_lim: int|float, y_lim: int|float, offset=R) -> bool:
-        """checks if the target is within a box"""
-        return True
+    def is_target_in_box(
+        self,
+        target_pos: tuple[float, float],
+        x_lim: int | float,
+        y_lim: int | float,
+        offset=R,
+    ) -> bool:
+        """Return whether target_pos is inside centered limits with an inset."""
+        x, y = target_pos
+        return abs(x) <= x_lim - offset and abs(y) <= y_lim - offset

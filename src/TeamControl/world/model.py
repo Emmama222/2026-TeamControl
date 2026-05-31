@@ -22,6 +22,7 @@ from TeamControl.world.snapshot import (
     WorldSnapshot,
     empty_robot_team,
 )
+from TeamControl.world.map.world_map import WorldMap
 
 
 log = logging.getLogger()
@@ -70,6 +71,7 @@ class WorldModel:
         self.robot_active = 6 # robots active
         self.blf_location = None # ball left field location
         self._onboard_store = {}  # (is_yellow, robot_id) -> OnboardObservation
+        self.world_map = WorldMap()
 
     def _bump_version(self):
         self._version.value += 1
@@ -100,11 +102,13 @@ class WorldModel:
             self._version.value += 1
             self.count = 0
         self.frame_list.append(frame)
+        self.world_map.update(self.snapshot())
 
     def update_geometry(self, geometry: GeometryData):
         self.geometry = geometry
         self.field = geometry.field
         self.ball_model = geometry.models
+        self.world_map.update(snapshot=None, field=geometry.field)
 
     def update_gc_data(self,packet):
         t, data = packet[0],packet[1]
@@ -198,25 +202,31 @@ class WorldModel:
         frame = self.frame_list.latest
 
         ball = None
+        ball_candidates = ()
         yellow = empty_robot_team()
         blue = empty_robot_team()
         frame_number = None
 
         if frame is not None:
             frame_number = frame.frame_number
-            ball = self._snapshot_ball(frame.ball)
+            ball_candidates = tuple(
+                self._snapshot_ball(ball)
+                for ball in frame.balls
+            )
+            ball = ball_candidates[0] if ball_candidates else None
             yellow = self._snapshot_team(frame.robots_yellow, is_yellow=True)
             blue = self._snapshot_team(frame.robots_blue, is_yellow=False)
 
         return WorldSnapshot(
             version=self.get_version(),
-            timestamp=time.time(),
+            timestamp=float(frame.t_capture) if frame is not None else time.time(),
             frame_number=frame_number,
             ball=ball,
             yellow=yellow,
             blue=blue,
             us_yellow=self._us_yellow,
             us_positive=self._us_positive,
+            ball_candidates=ball_candidates,
             game_state=self._state,
             active_robots=self.robot_active,
             ball_left_field=self.blf_location,
@@ -250,6 +260,21 @@ class WorldModel:
                     visible=True,
                 )
         return tuple(robots)
+
+    def get_planning_obstacles(self, now_s=None, horizon_ms=None, ignore_robots=None):
+        """Return the tracked, age-adjusted obstacle view for path planning."""
+        return self.world_map.get_planning_obstacles(
+            now_s=now_s,
+            horizon_ms=horizon_ms,
+            ignore_robots=ignore_robots,
+        )
+
+    def get_map_render_data(self, now_s=None, horizon_ms=250):
+        """Return serializable debug layers for the Qt map canvas."""
+        return self.world_map.get_render_data(
+            now_s=now_s,
+            horizon_ms=horizon_ms,
+        )
 
     # high level
     def get_all_in_team_except(self, us: bool, exclude: list[int]):

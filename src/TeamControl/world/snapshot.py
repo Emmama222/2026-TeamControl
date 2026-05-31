@@ -68,6 +68,7 @@ class WorldSnapshot:
     blue: tuple[RobotSnapshot | None, ...]
     us_yellow: bool
     us_positive: bool
+    ball_candidates: tuple[BallSnapshot, ...] = ()
     game_state: Any = None
     active_robots: int = 6
     cards_active: int = 0
@@ -117,10 +118,15 @@ def snapshot_to_dict(snapshot: WorldSnapshot) -> dict:
 
 def snapshot_from_dict(data: dict) -> WorldSnapshot:
     ball_data = data.get("ball")
+    ball_candidates_data = data.get("ball_candidates", ())
     yellow_data = data.get("yellow", ())
     blue_data = data.get("blue", ())
 
     ball = BallSnapshot(**ball_data) if ball_data is not None else None
+    ball_candidates = tuple(
+        BallSnapshot(**candidate)
+        for candidate in ball_candidates_data
+    )
     yellow = tuple(
         RobotSnapshot(**robot) if robot is not None else None
         for robot in yellow_data
@@ -132,6 +138,7 @@ def snapshot_from_dict(data: dict) -> WorldSnapshot:
 
     payload = dict(data)
     payload["ball"] = ball
+    payload["ball_candidates"] = ball_candidates
     payload["yellow"] = yellow
     payload["blue"] = blue
     return WorldSnapshot(**payload)
