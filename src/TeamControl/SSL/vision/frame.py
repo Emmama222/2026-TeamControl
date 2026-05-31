@@ -22,7 +22,7 @@ class Frame():
     Additional Attribute :
         ball (Ball) : gets the first available ball out of self.balls
     """
-    def __init__(self,frame_camera_id:int,frame_number:int, balls: list[Ball],robots_yellow:Team, robots_blue:Team, max_cameras:int) -> object:
+    def __init__(self,frame_camera_id:int,frame_number:int, t_capture:float, t_sent:float, balls: list[Ball],robots_yellow:Team, robots_blue:Team, max_cameras:int) -> object:
         self._balls: list[Ball]= [] #init
         # stores a backup copy of the data combines
         self.cameras: set[int]= set()
@@ -30,6 +30,8 @@ class Frame():
 
         self.max_cameras:int= max_cameras
         self.frame_number: int= frame_number
+        self.t_capture: float = t_capture
+        self.t_sent: float = t_sent
         self.balls= balls
         self.robots_yellow: Team= robots_yellow
         self.robots_blue: Team= robots_blue
@@ -44,6 +46,8 @@ class Frame():
         return cls(
             frame_camera_id=frame_data.camera_id,
             frame_number=frame_data.frame_number,
+            t_capture=frame_data.t_capture,
+            t_sent=frame_data.t_sent,
             balls=frame_data.balls,
             robots_yellow=Team(frame_data.robots_yellow,team_is_yellow=True),
             robots_blue=Team(frame_data.robots_blue,team_is_yellow=False),
@@ -56,8 +60,8 @@ class Frame():
         return len(self.cameras) == self.max_cameras
 
     @property
-    def ball(self) -> Ball:
-        # returns the first ball
+    def ball(self) -> Ball|None:
+        # returns the first ball object
         return self._balls[0] if self._balls else None
     # to see the position use : frame.ball.position
 
@@ -81,10 +85,12 @@ class Frame():
 
         self.robots_blue.merge(Team(new_frame_data.robots_blue,team_is_yellow=False))
         self.robots_yellow.merge(Team(new_frame_data.robots_yellow,team_is_yellow=True))
+        self.t_capture = max(self.t_capture, new_frame_data.t_capture)
+        self.t_sent = max(self.t_sent, new_frame_data.t_sent)
         self.cameras.add(new_frame_data.camera_id)
 
 
-    def get_all_in_team_except(self,isYellow:bool,exclude:list[int]=None):
+    def get_all_in_team_except(self,isYellow:bool,exclude:set[int]=set()):
         # get the latest frame
         # get the team
         if isYellow is True:
