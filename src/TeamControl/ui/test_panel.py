@@ -33,15 +33,10 @@ from TeamControl.network.grSimPacketFactory import grSimPacketFactory
 from TeamControl.utils.yaml_config import Config
 from TeamControl.robot.constants import (
     MAX_W, MANUAL_MAX_SPEED, MANUAL_MAX_W,
-    HALF_LEN, HALF_WID, FIELD_MARGIN,
+    FIELD_MARGIN,
 )
 from TeamControl.world.transform_cords import world2robot
-from TeamControl.robot.ball_nav import clamp, move_toward, wall_brake
-
-# Safe boundary comes from robot/constants.py only.
-_SAFE_X = HALF_LEN - FIELD_MARGIN
-_SAFE_Y = HALF_WID - FIELD_MARGIN
-
+from TeamControl.robot.ball_nav import clamp, move_toward, sanitize_field_target
 
 def _ts():
     return QTime.currentTime().toString("HH:mm:ss.zzz")
@@ -772,9 +767,11 @@ class TestPanel(QWidget):
 
     def go_to_point(self, x_mm, y_mm):
         """Called when the user clicks on the field after picking go-to-point."""
-        x_mm = max(-_SAFE_X, min(_SAFE_X, x_mm))
-        y_mm = max(-_SAFE_Y, min(_SAFE_Y, y_mm))
-        self._goto_target = (x_mm, y_mm)
+        self._goto_target = sanitize_field_target(
+            (x_mm, y_mm),
+            margin=FIELD_MARGIN,
+        )
+        x_mm, y_mm = self._goto_target
         self._stop_action()
         self._set_field_manual_override(True)
         self._action_mode = "go_to_point"
@@ -792,13 +789,6 @@ class TestPanel(QWidget):
             self._log.info(
                 "(Dispatcher paused for this bot so AI does not override.)")
 
-
-    def _is_near_boundary(self, robot_pose):
-        """True if the robot is close to the field edge."""
-        if robot_pose is None:
-            return False
-        rx, ry = abs(robot_pose[0]), abs(robot_pose[1])
-        return rx > _SAFE_X or ry > _SAFE_Y
 
     def _get_robot_pose(self):
         """Get just the robot pose (no ball needed)."""
@@ -844,15 +834,7 @@ class TestPanel(QWidget):
                 self._send_action(cmd)
             return
 
-        # Safety — stop if near field boundary
-        if self._is_near_boundary(robot_pose):
-            self._stop_action()
-            self._action_status.setStyleSheet(
-                f"color:{WARNING}; font-size:12px; padding:4px;")
-            self._action_status.setText("Stopped — robot near field boundary")
-            return
-
-        rel_ball = world2robot(robot_pose, ball_pos)
+        rel_ball = world2robot(robot_pose, sanitize_field_target(ball_pos))
         dist = math.hypot(rel_ball[0], rel_ball[1])
         angle = math.atan2(rel_ball[1], rel_ball[0])
         self._last_ball_dist = dist
@@ -891,9 +873,6 @@ class TestPanel(QWidget):
             vx, vy = move_toward(rel_ball, 0.45, ramp_dist=500, stop_dist=80)
             w = clamp(angle * 0.5, -MAX_W, MAX_W)
 
-        # Slow near walls instead of hard stop
-        vx, vy = wall_brake(robot_pose[0], robot_pose[1], vx, vy)
-
         cmd = self._build_action_cmd(vx=vx, vy=vy, w=w, kick=kick, dribble=dribble)
         self._send_action(cmd)
 
@@ -904,14 +883,6 @@ class TestPanel(QWidget):
 
         robot_pose = self._get_robot_pose()
         if robot_pose is None:
-            return
-
-        # Safety — stop if near field boundary
-        if self._is_near_boundary(robot_pose):
-            self._stop_action()
-            self._goto_status.setStyleSheet(
-                f"color:{WARNING}; font-size:12px; padding:4px;")
-            self._goto_status.setText("Stopped — robot near field boundary")
             return
 
         rel = world2robot(robot_pose, self._goto_target)
@@ -934,9 +905,6 @@ class TestPanel(QWidget):
         vx, vy = move_toward(rel, max_speed, ramp_dist=400, stop_dist=80)
         w = clamp(angle * 0.5, -MAX_W, MAX_W)
 
-        # Slow near walls
-        vx, vy = wall_brake(robot_pose[0], robot_pose[1], vx, vy)
-
         cmd = self._build_action_cmd(vx=vx, vy=vy, w=w)
         self._send_action(cmd)
 
@@ -954,16 +922,6 @@ class TestPanel(QWidget):
         if robot_pose is None:
             return
 
-        # Safety — stop if near field boundary
-        if self._is_near_boundary(robot_pose):
-            cmd = self._build_action_cmd()
-            self._send_action(cmd)
-            self._stop_action()
-            self._action_status.setStyleSheet(
-                f"color:{WARNING}; font-size:12px; padding:4px;")
-            self._action_status.setText("Stopped — robot near field boundary")
-            return
-
         if self._square_step >= len(self._SQUARE_WAYPOINTS):
             cmd = self._build_action_cmd()
             self._send_action(cmd)
@@ -974,7 +932,7 @@ class TestPanel(QWidget):
             return
 
         # Navigate to current waypoint
-        target = self._SQUARE_WAYPOINTS[self._square_step]
+        target = sanitize_field_target(self._SQUARE_WAYPOINTS[self._square_step])
         rel = world2robot(robot_pose, target)
         dist = math.hypot(rel[0], rel[1])
         angle = math.atan2(rel[1], rel[0])
@@ -991,9 +949,6 @@ class TestPanel(QWidget):
         # Omnidirectional movement toward waypoint
         vx, vy = move_toward(rel, 0.4, ramp_dist=400, stop_dist=80)
         w = clamp(angle * 0.5, -MAX_W, MAX_W)
-
-        # Slow near walls
-        vx, vy = wall_brake(robot_pose[0], robot_pose[1], vx, vy)
 
         cmd = self._build_action_cmd(vx=vx, vy=vy, w=w)
         self._send_action(cmd)

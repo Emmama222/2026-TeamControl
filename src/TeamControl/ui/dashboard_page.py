@@ -1,9 +1,8 @@
 """
 Dashboard page — field canvas on the left, tabbed sidebar on the right.
 
-Right-panel tabs:
+Right panel:
   Monitor   — runtime channels, robot table, game state
-  Controls  — robot selector + quick action buttons
 """
 
 import math
@@ -12,8 +11,7 @@ import time
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QGridLayout, QFrame, QScrollArea, QTabWidget,
-    QPushButton, QComboBox, QSpinBox,
+    QGridLayout, QFrame, QScrollArea,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
@@ -47,8 +45,6 @@ class DashboardPage(QWidget):
     """Field canvas + tabbed right sidebar."""
 
     coordinate_hover = Signal(float, float)
-    robot_action = Signal(bool, int, str)   # is_yellow, robot_id, action_name
-    pick_goto_point = Signal(bool, int)     # is_yellow, robot_id
 
     def __init__(self, field_canvas, parent=None, engine=None,
                  test_panel=None):
@@ -63,16 +59,11 @@ class DashboardPage(QWidget):
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self._field)
 
-        # ── Right sidebar: tab widget ─────────────────────────────
-        self._sidebar_tabs = QTabWidget()
-        self._sidebar_tabs.setMinimumWidth(320)
-        self._sidebar_tabs.setMaximumWidth(520)
-        self._sidebar_tabs.setDocumentMode(True)
-
-        self._sidebar_tabs.addTab(self._build_monitor_tab(), "Monitor")
-        self._sidebar_tabs.addTab(self._build_controls_tab(), "Controls")
-
-        splitter.addWidget(self._sidebar_tabs)
+        # ── Right sidebar: read-only runtime monitor ──────────────
+        monitor = self._build_monitor_panel()
+        monitor.setMinimumWidth(320)
+        monitor.setMaximumWidth(520)
+        splitter.addWidget(monitor)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([1100, 420])
@@ -86,9 +77,9 @@ class DashboardPage(QWidget):
 
     # ── Monitor tab ───────────────────────────────────────────────
 
-    def _build_monitor_tab(self):
-        tab = QWidget()
-        lay = QVBoxLayout(tab)
+    def _build_monitor_panel(self):
+        panel = QWidget()
+        lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
@@ -107,112 +98,7 @@ class DashboardPage(QWidget):
 
         scroll.setWidget(inner)
         lay.addWidget(scroll)
-        return tab
-
-    # ── Controls tab ──────────────────────────────────────────────
-
-    def _build_controls_tab(self):
-        tab = QWidget()
-        lay = QVBoxLayout(tab)
-        lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(10)
-
-        # Robot selector card
-        sel_card, sel_lay = _card("Robot Selection")
-        sel_grid = QGridLayout()
-        sel_grid.setSpacing(8)
-
-        sel_grid.addWidget(QLabel("Team:"), 0, 0)
-        self._ctrl_team = QComboBox()
-        self._ctrl_team.addItems(["Yellow", "Blue"])
-        sel_grid.addWidget(self._ctrl_team, 0, 1)
-
-        sel_grid.addWidget(QLabel("Robot ID:"), 1, 0)
-        self._ctrl_rid = QSpinBox()
-        self._ctrl_rid.setRange(0, 15)
-        self._ctrl_rid.setValue(0)
-        sel_grid.addWidget(self._ctrl_rid, 1, 1)
-
-        hint = QLabel("Left-click a robot on the field to auto-select")
-        hint.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
-        hint.setWordWrap(True)
-
-        sel_lay.addLayout(sel_grid)
-        sel_lay.addWidget(hint)
-        lay.addWidget(sel_card)
-
-        # Actions card
-        act_card, act_lay = _card("Actions")
-        act_grid = QGridLayout()
-        act_grid.setSpacing(6)
-
-        go_ball = QPushButton("Go to Ball")
-        go_ball.setMinimumHeight(36)
-        go_ball.clicked.connect(lambda: self._emit_action("go_to_ball"))
-
-        go_kick = QPushButton("Go && Kick")
-        go_kick.setMinimumHeight(36)
-        go_kick.clicked.connect(lambda: self._emit_action("go_to_ball_kick"))
-
-        draw_sq = QPushButton("Draw Square")
-        draw_sq.setMinimumHeight(36)
-        draw_sq.clicked.connect(lambda: self._emit_action("draw_square"))
-
-        goto_pt = QPushButton("Go to Point…")
-        goto_pt.setMinimumHeight(36)
-        goto_pt.setToolTip("Click a point on the field after pressing this")
-        goto_pt.clicked.connect(self._emit_pick_goto_point)
-
-        stop_btn = QPushButton("STOP")
-        stop_btn.setObjectName("stopBtn")
-        stop_btn.setMinimumHeight(40)
-        stop_btn.clicked.connect(lambda: self._emit_action("stop"))
-
-        act_grid.addWidget(go_ball,   0, 0)
-        act_grid.addWidget(go_kick,   0, 1)
-        act_grid.addWidget(draw_sq,   1, 0)
-        act_grid.addWidget(goto_pt,   1, 1)
-        act_grid.addWidget(stop_btn,  2, 0, 1, 2)
-
-        self._ctrl_status = QLabel("")
-        self._ctrl_status.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
-        self._ctrl_status.setWordWrap(True)
-
-        act_lay.addLayout(act_grid)
-        act_lay.addWidget(self._ctrl_status)
-        lay.addWidget(act_card)
-
-        lay.addStretch()
-        return tab
-
-    def _emit_action(self, action_name: str):
-        is_yellow = self._ctrl_team.currentText() == "Yellow"
-        robot_id = self._ctrl_rid.value()
-        self.robot_action.emit(is_yellow, robot_id, action_name)
-        if action_name == "stop":
-            self._ctrl_status.setStyleSheet(f"color:{WARNING}; font-size:11px;")
-            self._ctrl_status.setText("Stopped")
-        else:
-            team = "Yellow" if is_yellow else "Blue"
-            self._ctrl_status.setStyleSheet(f"color:{SUCCESS}; font-size:11px;")
-            self._ctrl_status.setText(f"{team} #{robot_id} → {action_name.replace('_', ' ')}")
-
-    def _emit_pick_goto_point(self):
-        is_yellow = self._ctrl_team.currentText() == "Yellow"
-        robot_id = self._ctrl_rid.value()
-        self.pick_goto_point.emit(is_yellow, robot_id)
-        self._ctrl_status.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
-        self._ctrl_status.setText("Click a point on the field…")
-
-    def select_robot(self, is_yellow: bool, robot_id: int):
-        """Auto-select a robot (called when user left-clicks a robot on the field)."""
-        self._ctrl_team.setCurrentText("Yellow" if is_yellow else "Blue")
-        self._ctrl_rid.setValue(robot_id)
-        team = "Yellow" if is_yellow else "Blue"
-        self._ctrl_status.setStyleSheet(f"color:{SUCCESS}; font-size:11px;")
-        self._ctrl_status.setText(f"Selected: {team} #{robot_id}")
-        # Switch to Controls tab so the user sees the selection
-        self._sidebar_tabs.setCurrentIndex(1)
+        return panel
 
     # ── Runtime channels card ─────────────────────────────────────
 
@@ -314,26 +200,8 @@ class DashboardPage(QWidget):
         hh.setSectionResizeMode(QHeaderView.Stretch)
         hh.setMinimumSectionSize(40)
         self._robot_table.verticalHeader().setDefaultSectionSize(32)
-        self._robot_table.itemSelectionChanged.connect(self._on_table_robot_selected)
         lay.addWidget(self._robot_table)
         parent_lay.addWidget(card)
-
-    def _on_table_robot_selected(self):
-        """Clicking a row in the robot table also selects that robot for controls."""
-        rows = self._robot_table.selectedItems()
-        if not rows:
-            return
-        row = self._robot_table.currentRow()
-        team_item = self._robot_table.item(row, 0)
-        id_item   = self._robot_table.item(row, 1)
-        if team_item is None or id_item is None:
-            return
-        is_yellow = team_item.text() == "Y"
-        try:
-            robot_id = int(id_item.text())
-        except ValueError:
-            return
-        self.select_robot(is_yellow, robot_id)
 
     # ── Game state card ───────────────────────────────────────────
 

@@ -32,6 +32,7 @@ from TeamControl.ui.dispatcher_panel import DispatcherPanel
 from TeamControl.ui.engine import SimEngine
 from TeamControl.ui.field_canvas import FieldCanvas
 from TeamControl.ui.log_panel import LogPanel
+from TeamControl.ui.map_canvas import MapDebugWidget
 from TeamControl.ui.onboard_possession_panel import OnboardPossessionPanel
 from TeamControl.ui.pd_calibration_page import PDCalibrationPage
 from TeamControl.ui.settings_page import SettingsPage
@@ -70,6 +71,7 @@ class MainWindow(QMainWindow):
         self._settings = SettingsPage()
         self._settings.set_channel_defaults(self._engine.reload_config())
         self._log_panel = LogPanel()
+        self._map_debug = MapDebugWidget()
         self._onboard_panel = OnboardPossessionPanel(engine=self._engine)
 
         # ── Central tabs ──────────────────────────────────────────
@@ -79,12 +81,14 @@ class MainWindow(QMainWindow):
 
         # Dashboard is the top-level Home tab; Calibration has its own main tab.
         self._tabs.addTab(self._dashboard, "  Home  ")
+        self._tabs.addTab(self._map_debug, "  World Map  ")
         self._tabs.addTab(self._calibration, "  Calibration  ")
         self._tabs.addTab(self._settings, "  Settings  ")
         self._tabs.addTab(self._log_panel, "  Console  ")
         self._tabs.addTab(self._test_panel, "  Hardware Test  ")
         self._tabs.addTab(self._dispatch_panel, "  Dispatcher  ")
         self._tabs.addTab(self._onboard_panel, "  Onboard Possession  ")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self._tabs)
 
         # ── Toolbar ──────────────────────────────────────────────
@@ -259,6 +263,10 @@ class MainWindow(QMainWindow):
         eng = self._engine
 
         eng.frame_ready.connect(self._on_frame)
+        eng.map_render_ready.connect(self._map_debug.set_render_data)
+        eng.field_geometry_ready.connect(self._field.set_field_geometry)
+        eng.field_geometry_ready.connect(self._map_debug.set_field_geometry)
+        eng.field_geometry_ready.connect(self._calibration.set_field_geometry)
         eng.game_state_ready.connect(self._dashboard.update_game_state)
         eng.dispatch_info.connect(self._dispatch_panel.update_info)
         eng.channel_status_ready.connect(self._dashboard.update_channel_status)
@@ -286,17 +294,18 @@ class MainWindow(QMainWindow):
         )
         self._field.point_picked.connect(self._test_panel.go_to_point)
         self._field.action_requested.connect(self._test_panel.field_action)
-        self._field.robot_selected.connect(self._dashboard.select_robot)
         self._field.robot_selected.connect(self._test_panel.select_robot)
-
-        self._dashboard.robot_action.connect(self._on_dashboard_action)
-        self._dashboard.pick_goto_point.connect(self._on_dashboard_pick_goto_point)
 
         self._settings.config_panel.config_changed.connect(
             lambda: self._log_panel.append("[config] Configuration saved")
         )
 
     # ── Handlers ─────────────────────────────────────────────────
+
+    def _on_tab_changed(self, index):
+        self._engine.set_map_render_enabled(
+            self._tabs.widget(index) is self._map_debug
+        )
 
     def _on_mode_combo_changed(self, mode):
         self._dashboard.set_mode(mode)
@@ -365,14 +374,6 @@ class MainWindow(QMainWindow):
         self._dashboard.update_frame(snap)
         fps = self._dashboard.get_fps()
         self._status_fps.setText(f"{fps} fps")
-
-    def _on_dashboard_action(self, is_yellow: bool, robot_id: int, action: str):
-        self._test_panel.select_robot(is_yellow, robot_id)
-        self._test_panel.start_action(action)
-
-    def _on_dashboard_pick_goto_point(self, is_yellow: bool, robot_id: int):
-        self._test_panel.select_robot(is_yellow, robot_id)
-        self._test_panel._pick_goto_point()
 
     def _on_coord_hover(self, x, y):
         self._status_coords.setText(f"({x:.0f}, {y:.0f}) mm")

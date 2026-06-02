@@ -40,6 +40,7 @@ class SimEngine(QObject):
     """Manages the multiprocessing backend and emits signals for UI."""
 
     frame_ready = Signal(object)         # WorldSnapshot
+    map_render_ready = Signal(object)    # MapRenderData
     field_geometry_ready = Signal(object)  # FieldSize
     game_state_ready = Signal(object)    # GC status dict | GameState | None
     dispatch_info = Signal(object)       # dict snapshot from dispatcher
@@ -75,6 +76,8 @@ class SimEngine(QObject):
         self._mode = ""
         self._last_version = -1
         self._last_field_geometry_key = None
+        self._last_map_render_emit_s = 0.0
+        self._map_render_enabled = False
 
         self._onboard_store = OnboardObservationStore()
         self._ip_to_robot: dict[str, tuple[bool, int]] = {}
@@ -128,6 +131,12 @@ class SimEngine(QObject):
             return True
         except Exception:
             return False
+
+    def set_map_render_enabled(self, enabled: bool):
+        """Enable the optional debug-map stream while its tab is visible."""
+        self._map_render_enabled = bool(enabled)
+        if enabled:
+            self._last_map_render_emit_s = 0.0
 
     # ── Lifecycle ─────────────────────────────────────────────────
 
@@ -236,6 +245,7 @@ class SimEngine(QObject):
         self._mode = mode
         self._last_version = -1
         self._last_field_geometry_key = None
+        self._last_map_render_emit_s = 0.0
         self._poll_timer.start()
 
         self.engine_started.emit(mode)
@@ -374,6 +384,15 @@ class SimEngine(QObject):
                 snap = self._wm.snapshot()
                 self._mark_channel_seen("vision")
                 self.frame_ready.emit(snap)
+                monotonic_s = time.monotonic()
+                if (
+                    self._map_render_enabled
+                    and monotonic_s - self._last_map_render_emit_s >= 0.1
+                ):
+                    self._last_map_render_emit_s = monotonic_s
+                    self.map_render_ready.emit(
+                        self._wm.get_map_render_data(now_s=time.time())
+                    )
 
             ver = self._wm.get_version()
             if ver != self._last_version:

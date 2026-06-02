@@ -35,7 +35,7 @@ from TeamControl.ui.field_canvas import FieldCanvas
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.robot.constants import HALF_LEN, HALF_WID, FIELD_MARGIN, MAX_W
 from TeamControl.world.transform_cords import world2robot
-from TeamControl.robot.ball_nav import clamp, move_toward, wall_brake
+from TeamControl.robot.ball_nav import clamp, move_toward
 from TeamControl.utils.yaml_config import Config
 
 
@@ -452,6 +452,12 @@ class CalibrationPage(QWidget):
     #  Frame polling
     # ══════════════════════════════════════════════════════════════
 
+    def set_field_geometry(self, field):
+        """Refresh the canvas and calibration waypoint bounds from vision."""
+        self._field.set_field_geometry(field)
+        self._field_half_len = float(field.field_length) / 2.0
+        self._field_half_wid = float(field.field_width) / 2.0
+
     def _poll_frame(self):
         if not self._engine or not self._engine._wm:
             return
@@ -711,7 +717,6 @@ class CalibrationPage(QWidget):
         # Move to start using ball_nav functions
         vx, vy = move_toward(rel, _NAV_SPEED, ramp_dist=300, stop_dist=50)
         w = clamp(angle * _TURN_GAIN, -MAX_W, MAX_W)
-        vx, vy = wall_brake(pose[0], pose[1], vx, vy)
         self._send_cmd(vx=vx, vy=vy, w=w)
 
     def _tick_running(self, pose):
@@ -776,9 +781,6 @@ class CalibrationPage(QWidget):
             half = -w * dt * 0.5
             c, s = math.cos(half), math.sin(half)
             vx_r, vy_r = vx_r * c - vy_r * s, vx_r * s + vy_r * c
-
-        # ── 6. Wall brake ───────────────────────────────────────
-        vx_r, vy_r = wall_brake(pose[0], pose[1], vx_r, vy_r)
 
         self._send_cmd(vx=vx_r, vy=vy_r, w=w)
 
