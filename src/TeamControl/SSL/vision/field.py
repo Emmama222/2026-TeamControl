@@ -2,6 +2,18 @@ from typing import Optional
 from enum import Enum
 
 
+def _optional_proto_value(message, name):
+    """Return None when an optional protobuf field was not provided."""
+    has_field = getattr(message, "HasField", None)
+    if has_field is not None:
+        try:
+            if not has_field(name):
+                return None
+        except ValueError:
+            pass
+    return getattr(message, name, None)
+
+
 class FieldShapeType(Enum):
     Undefined = 0
     CenterCircle = 1
@@ -127,8 +139,8 @@ class FieldSize():
                 boundary_width=int(fs.boundary_width),
                 field_lines=[FieldLines.from_proto(line) for line in fs.field_lines],
                 field_arcs=[FieldArcs.from_proto(arc) for arc in fs.field_arcs],
-                penalty_area_depth=getattr(fs, "penalty_area_depth", None),
-                penalty_area_width=getattr(fs, "penalty_area_width", None)
+                penalty_area_depth=_optional_proto_value(fs, "penalty_area_depth"),
+                penalty_area_width=_optional_proto_value(fs, "penalty_area_width")
             )
         else: 
             return None
