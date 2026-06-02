@@ -33,6 +33,11 @@ measuring vision processing and network delay.
 `Frame` preserves both values. When multiple cameras contribute to one frame,
 the combined frame keeps the latest values.
 
+Robot velocity uses differences between SSL `t_capture` values. Observation
+freshness uses a separate local receipt timestamp from `time.time()`. Do not
+subtract an SSL capture timestamp directly from the local Unix clock: SSL
+sources are not required to use the same clock origin.
+
 ## Robot Tracking
 
 Each fresh robot observation looks backward at the previous observation for the
@@ -170,6 +175,8 @@ The canvas automatically adds a checkbox for the new layer.
 The canvas starts with local field defaults, then switches to the latest
 `SSL_GeometryFieldSize` received from vision. A changed geometry updates the
 home field, world-map field, and calibration field without restarting the UI.
+Debug render frames are requested at `10 Hz` only while the `World Map` tab is
+visible, keeping the normal dashboard path lightweight.
 
 ## Voronoi Integration Plan
 
@@ -184,3 +191,17 @@ The next contained implementation steps are:
 
 The global planner proposes a route. The local navigator remains responsible
 for braking and replanning when moving obstacles invalidate that route.
+
+## Field-Edge Targets
+
+Movement code sanitizes world-frame targets before driving. A target outside
+the playable field is offset inward to an inset box, rather than slowing every
+command merely because the robot is close to a wall. Callers that cannot use an
+offset target can explicitly reject it with:
+
+```python
+sanitize_field_target(target, reject_outside=True)
+```
+
+Distance-to-target deceleration and obstacle avoidance remain separate safety
+behaviors.

@@ -2,11 +2,14 @@
 from TeamControl.network.ssl_sockets import GameControl
 from TeamControl.SSL.game_controller.Message import RefereeMessage
 import time
+from multiprocessing import Event
 
-gc_recv = GameControl()
+is_running = Event()
+is_running.set()
+gc_recv = GameControl(is_running=is_running)
 
 for i in range(5):
-    ref_msg,_ = gc_recv.listen()
+    ref_msg = gc_recv.listen()
     start_time = time.time()
     new_ref_msg = RefereeMessage.from_proto(referee=ref_msg)
     elapsed = (time.time() - start_time) * 1000  # milliseconds

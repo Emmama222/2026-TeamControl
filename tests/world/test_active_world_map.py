@@ -119,8 +119,9 @@ def test_world_model_refreshes_age_adjusted_planning_obstacles_on_new_frame():
         )
     )
 
+    latest_obs = world_model.world_map.get_obstacles()[0]
     planning_obs, = world_model.get_planning_obstacles(
-        now_s=11.1,
+        now_s=latest_obs.received_at_s + 0.1,
         horizon_ms=200,
     )
 

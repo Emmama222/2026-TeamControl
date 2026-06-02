@@ -128,9 +128,12 @@ def test_ball_validation_rejects_low_confidence_observation():
 
 def test_missing_ball_preserves_last_valid_position_but_marks_it_not_visible():
     world_map = WorldMap()
-    world_map.update(make_snapshot(1.0, ball=BallSnapshot(10.0, 20.0)))
+    world_map.update(
+        make_snapshot(1.0, ball=BallSnapshot(10.0, 20.0)),
+        received_at_s=1.0,
+    )
 
-    world_map.update(make_snapshot(1.1))
+    world_map.update(make_snapshot(1.1), received_at_s=1.1)
 
     assert world_map.ball == (10.0, 20.0)
     assert not world_map.ball_visible
@@ -221,11 +224,17 @@ def test_target_box_respects_offset():
 
 def test_planning_obstacles_compensate_for_observation_age_and_horizon():
     world_map = WorldMap()
-    world_map.update(make_snapshot(1.0, [robot(0, False, 0.0, 0.0)]))
-    world_map.update(make_snapshot(2.0, [robot(0, False, 100.0, 0.0)]))
+    world_map.update(
+        make_snapshot(1.0, [robot(0, False, 0.0, 0.0)]),
+        received_at_s=2.0,
+    )
+    world_map.update(
+        make_snapshot(2.0, [robot(0, False, 100.0, 0.0)]),
+        received_at_s=3.0,
+    )
 
     planning_obs, = world_map.get_planning_obstacles(
-        now_s=2.1,
+        now_s=3.1,
         horizon_ms=200,
     )
 
@@ -233,6 +242,26 @@ def test_planning_obstacles_compensate_for_observation_age_and_horizon():
     assert planning_obs.radius_mm == pytest.approx(150.0)
     assert planning_obs.observation_age_ms == pytest.approx(100.0)
     assert planning_obs.prediction_horizon_ms == pytest.approx(300.0)
+
+
+def test_planning_obstacle_age_uses_local_receipt_clock_not_capture_clock():
+    world_map = WorldMap()
+    world_map.update(
+        make_snapshot(10.0, [robot(0, False, 0.0, 0.0)]),
+        received_at_s=1_700_000_000.0,
+    )
+    world_map.update(
+        make_snapshot(10.1, [robot(0, False, 100.0, 0.0)]),
+        received_at_s=1_700_000_000.1,
+    )
+
+    planning_obs, = world_map.get_planning_obstacles(
+        now_s=1_700_000_000.2,
+        horizon_ms=250,
+    )
+
+    assert planning_obs.observation_age_ms == pytest.approx(100.0)
+    assert planning_obs.radius_mm == pytest.approx(470.0)
 
 
 def test_planning_obstacles_can_ignore_the_controlled_robot():
