@@ -34,6 +34,7 @@ class WorldMap:
         self.ball: tuple[float, float] | None = None
         self.ball_vel_mmps = (0.0, 0.0)
         self._ball_timestamp: float | None = None
+        self._ball_received_at_s: float | None = None
         self.ball_visible = False
         self.ball_last_seen_s: float | None = None
         self.last_rejected_ball_pos_mm: tuple[float, float] | None = None
@@ -48,11 +49,13 @@ class WorldMap:
         if snapshot is not None:
             self.update(snapshot)
 
-    def update(self, snapshot, field=None) -> None:
+    def update(self, snapshot, field=None, received_at_s=None) -> None:
         if field is not None:
             self._create_field(field)
         if snapshot is not None:
-            self._extract_from_snap(snapshot)
+            if received_at_s is None:
+                received_at_s = time.time()
+            self._extract_from_snap(snapshot, received_at_s)
 
     # -------------------------
     # Map creation
@@ -60,7 +63,7 @@ class WorldMap:
     def _create_field(self, field) -> None:
         self.field = field
 
-    def _extract_from_snap(self, snapshot) -> None:
+    def _extract_from_snap(self, snapshot, received_at_s: float) -> None:
         timestamp = float(snapshot.timestamp)
         robots = (
             robot
@@ -68,7 +71,7 @@ class WorldMap:
             for robot in team
             if robot is not None
         )
-        self.obs = self.robots2obs(robots, timestamp)
+        self.obs = self.robots2obs(robots, timestamp, received_at_s)
         self.robots = {
             (obs.team_is_yellow, obs.robot_id): obs
             for obs in self.obs
@@ -76,11 +79,16 @@ class WorldMap:
         ball_candidates = getattr(snapshot, "ball_candidates", ())
         if not ball_candidates and snapshot.ball is not None:
             ball_candidates = (snapshot.ball,)
-        self._update_ball_candidates(ball_candidates, timestamp)
+        self._update_ball_candidates(ball_candidates, timestamp, received_at_s)
         if snapshot.ball_left_field is not None:
             self.ball_left_field_pos_mm = snapshot.ball_left_field
 
-    def robots2obs(self, robots: Iterable, timestamp: float) -> list[Obstacle]:
+    def robots2obs(
+        self,
+        robots: Iterable,
+        timestamp: float,
+        received_at_s: float | None = None,
+    ) -> list[Obstacle]:
         obstacles = []
         for robot in robots:
             obs = Obstacle(
@@ -88,6 +96,7 @@ class WorldMap:
                 robot_id=robot.id,
                 team_is_yellow=robot.isYellow,
                 pos_mm=robot.pose,
+                received_at_s=received_at_s,
             )
             older_obs = self.robots.get((obs.team_is_yellow, obs.robot_id))
             if older_obs is not None and older_obs.timestamp < obs.timestamp:
@@ -95,7 +104,12 @@ class WorldMap:
             obstacles.append(obs)
         return obstacles
 
-    def _update_ball_candidates(self, balls, timestamp: float) -> None:
+    def _update_ball_candidates(
+        self,
+        balls,
+        timestamp: float,
+        received_at_s: float,
+    ) -> None:
         balls = tuple(balls)
         if not balls:
             self.ball_visible = False
@@ -176,6 +190,7 @@ class WorldMap:
             )
         self.ball = position
         self._ball_timestamp = timestamp
+        self._ball_received_at_s = received_at_s
         self.ball_last_seen_s = timestamp
         self.ball_visible = True
         self.last_rejected_ball_pos_mm = None
@@ -220,7 +235,12 @@ class WorldMap:
             return None
         if now_s is None:
             now_s = time.time()
-        return max(0.0, now_s - self.ball_last_seen_s)
+        reference_s = (
+            self._ball_received_at_s
+            if self._ball_received_at_s is not None
+            else self.ball_last_seen_s
+        )
+        return max(0.0, now_s - reference_s)
 
     # -------------------------
     # Render/debug
@@ -296,7 +316,7 @@ class WorldMap:
         for obs in self.obs:
             if (obs.team_is_yellow, obs.robot_id) in ignore_robots:
                 continue
-            age_ms = max(0.0, (now_s - obs.timestamp) * 1000.0)
+            age_ms = obs.age_s(now_s) * 1000.0
             prediction_horizon_ms = age_ms + horizon_ms
             planning_obstacles.append(
                 PlanningObstacle(

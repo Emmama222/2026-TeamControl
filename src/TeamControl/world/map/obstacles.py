@@ -15,6 +15,7 @@ class Obstacle:
     robot_id: int
     team_is_yellow: bool
     pos_mm: tuple[float, float, float]  # mm
+    received_at_s: float | None = None  # local Unix time when the frame arrived
     @property
     def radius(self) -> float:
         """The physical radius of robot"""
@@ -30,6 +31,17 @@ class Obstacle:
             raise ValueError("horizon_ms must be non-negative")
         dt_s = horizon_ms/1000
         return self.safe_radius  + self.speed_mmps * dt_s
+
+    def age_s(self, now_s: float | None = None) -> float:
+        """Return local time elapsed since receipt of this observation."""
+        if now_s is None:
+            now_s = time.time()
+        reference_s = (
+            self.received_at_s
+            if self.received_at_s is not None
+            else self.timestamp
+        )
+        return max(0.0, now_s - reference_s)
 
     @property
     def vel_mmps(self):
@@ -150,7 +162,7 @@ if __name__ == "__main__":
     o2 = Obstacle(time.monotonic(),0, True, (1.0, 0.0, 0.0))
     o2.update_vel_from(o1)
     print(o2.vel_mmps,o2.predicted_pos(1000))
-    
+
     print(o1.is_target_in_obs([110.0,0.0]))
 
     print(o1.is_target_in_obs([140.0,0.0]))
