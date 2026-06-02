@@ -12,7 +12,7 @@ Ball physics:
 Movement:
   - clamp              — value clamping
   - move_toward        — deceleration-ramp movement toward a local target
-  - wall_brake         — slow down near field boundaries
+  - sanitize_field_target — offset out-of-field movement targets inward
   - rotation_compensate — pre-rotate velocity during turning
 
 Pathfinding:
@@ -25,7 +25,7 @@ import os
 from typing import Tuple, Optional, List
 
 from TeamControl.robot.constants import (
-    HALF_LEN, HALF_WID,
+    HALF_LEN, HALF_WID, ROBOT_RADIUS,
     FRICTION,
     BALL_HISTORY_SIZE,
     LOOP_RATE,
@@ -65,6 +65,32 @@ _reload_calibration()
 def clamp(v, lo, hi):
     """Clamp v to [lo, hi]."""
     return max(lo, min(hi, v))
+
+
+def is_target_in_field_box(target, margin=ROBOT_RADIUS):
+    """Return whether a world-frame target is inside the inset field box."""
+    if target is None:
+        return False
+    return (
+        -HALF_LEN + margin <= target[0] <= HALF_LEN - margin
+        and -HALF_WID + margin <= target[1] <= HALF_WID - margin
+    )
+
+
+def sanitize_field_target(target, margin=ROBOT_RADIUS, reject_outside=False):
+    """Return an allowed world-frame movement target.
+
+    Targets outside the inset field box are offset inward by default. Callers
+    that prefer to ignore invalid targets can pass ``reject_outside=True``.
+    """
+    if target is None or is_target_in_field_box(target, margin):
+        return target
+    if reject_outside:
+        return None
+    return (
+        clamp(target[0], -HALF_LEN + margin, HALF_LEN - margin),
+        clamp(target[1], -HALF_WID + margin, HALF_WID - margin),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -135,11 +161,6 @@ def update_ball_history(history, now, ball, last_ball_xy,
 #  MOVEMENT
 # ═══════════════════════════════════════════════════════════════════
 
-# Wall-braking defaults (shared by striker and navigator)
-WALL_BRAKE_DIST = 400       # start braking this far from wall (mm)
-WALL_BRAKE_MIN  = 0.10      # minimum speed factor near walls
-
-
 def move_toward(rel, speed, ramp_dist=350.0, stop_dist=10.0, min_speed=0.06):
     """Move toward a robot-local point with linear deceleration ramp.
 
@@ -169,23 +190,8 @@ def move_toward(rel, speed, ramp_dist=350.0, stop_dist=10.0, min_speed=0.06):
     return (rel[0] / d) * speed, (rel[1] / d) * speed
 
 
-def wall_brake(rx, ry, vx, vy,
-               brake_dist=WALL_BRAKE_DIST, min_factor=WALL_BRAKE_MIN):
-    """Slow velocity near field boundaries.
-
-    Args:
-        rx, ry:     robot world position
-        vx, vy:     current velocity
-        brake_dist: distance from wall to start braking
-        min_factor: minimum speed multiplier
-
-    Returns:
-        (vx, vy) braked velocity.
-    """
-    dist_to_wall = min(HALF_LEN - abs(rx), HALF_WID - abs(ry))
-    if dist_to_wall < brake_dist:
-        factor = max(dist_to_wall / brake_dist, min_factor)
-        return vx * factor, vy * factor
+def wall_brake(rx, ry, vx, vy, *args, **kwargs):
+    """Deprecated compatibility shim; sanitize movement targets instead."""
     return vx, vy
 
 
@@ -257,7 +263,7 @@ def compute_arc_nav(
 
     if not need_arc:
         side = committed_side if committed_side is not None else (1 if perp >= 0 else -1)
-        return behind, side, True
+        return sanitize_field_target(behind), side, True
 
     # ── Commit to a side with strong hysteresis ─────────────
     HYSTERESIS = avoid_radius * 0.6
@@ -294,5 +300,7 @@ def compute_arc_nav(
     dir_x /= dir_d
     dir_y /= dir_d
 
-    nav = (ball[0] + dir_x * arc_r, ball[1] + dir_y * arc_r)
+    nav = sanitize_field_target(
+        (ball[0] + dir_x * arc_r, ball[1] + dir_y * arc_r)
+    )
     return nav, committed_side, False

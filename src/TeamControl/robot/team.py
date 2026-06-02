@@ -23,6 +23,7 @@ import math
 
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.world.transform_cords import world2robot
+from TeamControl.robot.ball_nav import sanitize_field_target
 from TeamControl.robot.ball_nav import compute_arc_nav, predict_ball as _predict_ball
 from TeamControl.robot.constants import (
     FIELD_LENGTH, FIELD_WIDTH, HALF_LEN, HALF_WID,
@@ -674,12 +675,9 @@ def _defender_targets(ball, our, opps, our_gx, opp_gx, dids, we_have, poss_state
 #  COMMAND BUILDER
 # ════════════════════════════════════════════════════════════════════
 
-_WALL_BRAKE_DIST = 400   # mm from field edge to start braking
-_WALL_BRAKE_MIN  = 0.10  # minimum speed factor near walls
-
-
 def _cmd(rid, rpos, target, face, speed, kick, dribble, yellow,
          ramp_dist=350.0, stop_dist=20.0):
+    target = sanitize_field_target(target, margin=FIELD_MARGIN)
     rel_t = world2robot(rpos, target)
     rel_f = world2robot(rpos, face)
     d = math.hypot(rel_t[0], rel_t[1])
@@ -694,16 +692,6 @@ def _cmd(rid, rpos, target, face, speed, kick, dribble, yellow,
             s = max(speed * t, 0.10)
         ux, uy = rel_t[0] / d, rel_t[1] / d
         vx, vy = ux * s, uy * s
-
-    # Wall braking — slow down near field edges
-    dist_to_wall = min(
-        HALF_LEN - abs(rpos[0]),
-        HALF_WID - abs(rpos[1]),
-    )
-    if dist_to_wall < _WALL_BRAKE_DIST:
-        wf = max(dist_to_wall / _WALL_BRAKE_DIST, _WALL_BRAKE_MIN)
-        vx *= wf
-        vy *= wf
 
     ang = math.atan2(rel_f[1], rel_f[0])
     w = 0.0 if abs(ang) < 0.04 else _cl(ang * TURN_GAIN, -MAX_W, MAX_W)

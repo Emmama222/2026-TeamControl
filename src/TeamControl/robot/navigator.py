@@ -19,7 +19,7 @@ import math
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.world.transform_cords import world2robot
 from TeamControl.robot.ball_nav import (
-    clamp, move_toward, wall_brake, rotation_compensate,
+    clamp, move_toward, rotation_compensate, sanitize_field_target,
 )
 from TeamControl.cache import TickCache
 from TeamControl.robot.constants import (
@@ -172,7 +172,8 @@ def run_navigator(is_running, dispatch_q, wm, robot_id, is_yellow,
         ball = cache.ball.position
 
         # ── Target: the ball ─────────────────────────────────
-        rel_ball = world2robot(rpos, ball)
+        movement_target = sanitize_field_target(ball)
+        rel_ball = world2robot(rpos, movement_target)
         d_ball = math.hypot(rel_ball[0], rel_ball[1])
 
         # ── Obstacle avoidance (predictive) ──────────────────
@@ -206,9 +207,6 @@ def run_navigator(is_running, dispatch_q, wm, robot_id, is_yellow,
         if speed > max_spd:
             raw_vx = raw_vx / speed * max_spd
             raw_vy = raw_vy / speed * max_spd
-
-        # ── Wall braking ────────────────────────────────────
-        raw_vx, raw_vy = wall_brake(rpos[0], rpos[1], raw_vx, raw_vy)
 
         # ── Face the ball ────────────────────────────────────
         ang_ball = math.atan2(rel_ball[1], rel_ball[0])

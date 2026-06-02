@@ -14,7 +14,7 @@ import math
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.world.transform_cords import world2robot
 from TeamControl.robot.ball_nav import (
-    clamp, move_toward, wall_brake, rotation_compensate,
+    clamp, move_toward, rotation_compensate, sanitize_field_target,
     ball_velocity, update_ball_history, predict_ball,
 )
 from TeamControl.robot.navigator import _compute_avoidance
@@ -88,6 +88,7 @@ def _dist(a, b):
 
 
 def _go_to(me, target, speed, stop_r=40, ramp=400):
+    target = sanitize_field_target(target)
     rel = world2robot(me, target)
     return move_toward(rel, speed, ramp_dist=ramp, stop_dist=stop_r)
 
@@ -503,9 +504,6 @@ def run_coop(is_running, dispatch_q, wm, robot_id, teammate_id,
         if spd > max_spd:
             vx = vx / spd * max_spd
             vy = vy / spd * max_spd
-
-        # -- Wall braking -----------------------------------------------
-        vx, vy = wall_brake(me[0], me[1], vx, vy)
 
         # -- Rotation compensation --------------------------------------
         vx, vy = rotation_compensate(vx, vy, w)
