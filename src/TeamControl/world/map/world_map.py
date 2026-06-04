@@ -245,9 +245,33 @@ class WorldMap:
     # -------------------------
     # Render/debug
     # -------------------------
-    def get_render_data(self, now_s=None, horizon_ms=250, extra_layers=()):
+    def get_render_data(
+        self,
+        now_s=None,
+        horizon_ms=250,
+        extra_layers=(),
+        include_voronoi=False,
+        voronoi_density_percent=10.0,
+        voronoi_max_density_nodes=80,
+        voronoi_obstacle_cost_weight=2.0,
+    ):
         """Return serializable, toggleable layers for a debug renderer."""
         from TeamControl.world.map.renderer import Renderer
+
+        extra_layers = tuple(extra_layers)
+        if include_voronoi:
+            from TeamControl.world.map.voronoi_overlay import build_voronoi_overlay
+
+            overlay = build_voronoi_overlay(
+                self,
+                now_s=now_s,
+                horizon_ms=horizon_ms,
+                density_percent=voronoi_density_percent,
+                max_density_nodes=voronoi_max_density_nodes,
+                obstacle_cost_weight=voronoi_obstacle_cost_weight,
+            )
+            self.last_voronoi_generation_ms = overlay.generation_ms
+            extra_layers = (*extra_layers, overlay.layer)
 
         return Renderer(prediction_horizon_ms=horizon_ms).render(
             self,
