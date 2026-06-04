@@ -77,6 +77,7 @@ class SimEngine(QObject):
         self._last_version = -1
         self._last_field_geometry_key = None
         self._last_map_render_emit_s = 0.0
+        self._last_voronoi_latency_log_s = 0.0
         self._map_render_enabled = False
 
         self._onboard_store = OnboardObservationStore()
@@ -246,6 +247,7 @@ class SimEngine(QObject):
         self._last_version = -1
         self._last_field_geometry_key = None
         self._last_map_render_emit_s = 0.0
+        self._last_voronoi_latency_log_s = 0.0
         self._poll_timer.start()
 
         self.engine_started.emit(mode)
@@ -390,9 +392,18 @@ class SimEngine(QObject):
                     and monotonic_s - self._last_map_render_emit_s >= 0.1
                 ):
                     self._last_map_render_emit_s = monotonic_s
-                    self.map_render_ready.emit(
-                        self._wm.get_map_render_data(now_s=time.time())
+                    render_data = self._wm.get_map_render_data(
+                        now_s=time.time(),
+                        include_voronoi=True,
                     )
+                    self.map_render_ready.emit(render_data)
+                    if monotonic_s - self._last_voronoi_latency_log_s >= 1.0:
+                        latency_ms = self._wm.get_last_voronoi_generation_ms()
+                        if latency_ms is not None:
+                            self.log_message.emit(
+                                f"[map] Voronoi overlay generated in {latency_ms:.2f} ms"
+                            )
+                            self._last_voronoi_latency_log_s = monotonic_s
 
             ver = self._wm.get_version()
             if ver != self._last_version:
