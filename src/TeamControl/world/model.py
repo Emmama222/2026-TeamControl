@@ -269,6 +269,14 @@ class WorldModel:
             ignore_robots=ignore_robots,
         )
 
+    def get_obstacles(self):
+        """Return the current tracked robot obstacles for map rendering."""
+        return tuple(self.world_map.get_obstacles())
+
+    def get_ball_trajectory(self, horizon_ms=None):
+        """Return predicted ball position and velocity for map rendering."""
+        return self.world_map.get_ball_trajectory(horizon_ms=horizon_ms)
+
     def get_map_render_data(
         self,
         now_s=None,

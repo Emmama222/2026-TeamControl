@@ -16,6 +16,7 @@ from TeamControl.process_workers.vision_runner import VisionProcess
 from TeamControl.process_workers.gcfsm_runner import GCfsm
 from TeamControl.process_workers.wm_runner import WMWorker
 from TeamControl.process_workers.robot_recv_runner import RobotRecv
+from TeamControl.process_workers.voronoi_map_runner import WorldMapRenderWorker
 from TeamControl.world.model_manager import WorldModelManager
 from TeamControl.dispatcher.dispatch import Dispatcher
 from TeamControl.utils.yaml_config import Config
@@ -24,6 +25,7 @@ from TeamControl.world.recording import AsyncSnapshotRecorder
 from TeamControl.robot.goalie import run_goalie
 from TeamControl.robot.striker import run_striker
 from TeamControl.robot.navigator import run_navigator, WAYPOINTS_A, WAYPOINTS_B
+from TeamControl.robot.voronoi_navigator import run_voronoi_navigator
 from TeamControl.robot.team import run_team
 from TeamControl.robot.coop import run_coop
 
@@ -50,7 +52,16 @@ class SimEngine(QObject):
     log_message = Signal(str)            # log line
     onboard_packet = Signal(object, object)  # (OnboardObservation, addr)
 
-    MODES = ["calibration", "vision_only", "goalie", "1v1", "obstacle", "coop", "6v6"]
+    MODES = [
+        "calibration",
+        "vision_only",
+        "voronoi_test",
+        "goalie",
+        "1v1",
+        "obstacle",
+        "coop",
+        "6v6",
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,6 +76,9 @@ class SimEngine(QObject):
         self._dispatch_q: Queue | None = None
         self._dispatch_info_q: Queue | None = None
         self._recv_q: Queue | None = None
+        self._map_render_req_q: Queue | None = None
+        self._map_render_resp_q: Queue | None = None
+        self._planner_path_q: Queue | None = None
         self._grsim_sender: grSimSender | None = None
         self._field_manual_q: Queue | None = None
         self._snapshot_recorder: AsyncSnapshotRecorder | None = None
@@ -79,6 +93,12 @@ class SimEngine(QObject):
         self._last_map_render_emit_s = 0.0
         self._last_voronoi_latency_log_s = 0.0
         self._map_render_enabled = False
+        self._latest_map_render_data = None
+        self._latest_map_render_generation_ms = None
+        self._latest_voronoi_generation_ms = None
+        self._latest_planner_paths: dict[tuple[bool, int], dict] = {}
+        self._map_render_request_pending = False
+        self._map_render_request_id = 0
 
         self._onboard_store = OnboardObservationStore()
         self._ip_to_robot: dict[str, tuple[bool, int]] = {}
@@ -181,6 +201,9 @@ class SimEngine(QObject):
         self._dispatch_q = Queue()
         self._dispatch_info_q = Queue()
         self._recv_q = Queue()
+        self._map_render_req_q = Queue()
+        self._map_render_resp_q = Queue()
+        self._planner_path_q = Queue()
         self._field_manual_q = Queue()
         self._is_running = Event()
 
@@ -211,6 +234,11 @@ class SimEngine(QObject):
             Process(target=Dispatcher.run_worker,
                     args=(self._is_running, None, self._dispatch_q, preset,
                           self._dispatch_info_q, self._field_manual_q),
+                    daemon=True))
+        self._bg_procs.append(
+            Process(target=WorldMapRenderWorker.run_worker,
+                    args=(self._is_running, None, self._map_render_req_q,
+                          self._map_render_resp_q),
                     daemon=True))
         if defaults["robot_recv"]:
             self._bg_procs.append(
@@ -248,6 +276,12 @@ class SimEngine(QObject):
         self._last_field_geometry_key = None
         self._last_map_render_emit_s = 0.0
         self._last_voronoi_latency_log_s = 0.0
+        self._latest_map_render_data = None
+        self._latest_map_render_generation_ms = None
+        self._latest_voronoi_generation_ms = None
+        self._latest_planner_paths = {}
+        self._map_render_request_pending = False
+        self._map_render_request_id = 0
         self._poll_timer.start()
 
         self.engine_started.emit(mode)
@@ -290,6 +324,9 @@ class SimEngine(QObject):
         self._wm = None
         self._wm_manager = None
         self._recv_q = None
+        self._map_render_req_q = None
+        self._map_render_resp_q = None
+        self._planner_path_q = None
         self._dispatch_info_q = None
         self._field_manual_q = None
         self._running = False
@@ -324,6 +361,22 @@ class SimEngine(QObject):
         if mode == "vision_only":
             self.log_message.emit(
                 "[engine] Vision-only mode — no robot models running")
+            return procs
+
+        if mode == "voronoi_test":
+            us_y = preset.us_yellow
+            opp_y = not us_y
+            procs.append(Process(target=run_voronoi_navigator,
+                                 args=(ev, dq, wm, our_id, us_y,
+                                       self._planner_path_q),
+                                 daemon=True))
+            procs.append(Process(target=run_voronoi_navigator,
+                                 args=(ev, dq, wm, opp_id, opp_y,
+                                       self._planner_path_q),
+                                 daemon=True))
+            self.log_message.emit(
+                "[engine] Voronoi test mode — running one yellow and one blue "
+                "robot through the live Voronoi planner")
             return procs
 
         if mode == "goalie":
@@ -392,16 +445,24 @@ class SimEngine(QObject):
                     and monotonic_s - self._last_map_render_emit_s >= 0.1
                 ):
                     self._last_map_render_emit_s = monotonic_s
-                    render_data = self._wm.get_map_render_data(
-                        now_s=time.time(),
-                        include_voronoi=True,
-                    )
-                    self.map_render_ready.emit(render_data)
+                    now_s = time.time()
+                    self._drain_planner_paths(now_s)
+                    self._drain_map_render_worker()
+                    self._request_map_render_data(now_s)
+                    if self._latest_map_render_data is not None:
+                        self.map_render_ready.emit(self._latest_map_render_data)
                     if monotonic_s - self._last_voronoi_latency_log_s >= 1.0:
-                        latency_ms = self._wm.get_last_voronoi_generation_ms()
-                        if latency_ms is not None:
+                        render_ms = self._latest_map_render_generation_ms
+                        voronoi_ms = self._latest_voronoi_generation_ms
+                        if render_ms is not None:
                             self.log_message.emit(
-                                f"[map] Voronoi overlay generated in {latency_ms:.2f} ms"
+                                "[map] World map worker generated in "
+                                f"{render_ms:.2f} ms"
+                                + (
+                                    f" (Voronoi {voronoi_ms:.2f} ms)"
+                                    if voronoi_ms is not None
+                                    else ""
+                                )
                             )
                             self._last_voronoi_latency_log_s = monotonic_s
 
@@ -420,6 +481,90 @@ class SimEngine(QObject):
         self._sync_onboard_from_wm()
         self._drain_dispatch_info()
         self._emit_channel_status()
+
+    def _request_map_render_data(self, now_s: float):
+        if (
+            self._map_render_request_pending
+            or self._map_render_req_q is None
+            or self._wm is None
+        ):
+            return
+        try:
+            obstacles = self._wm.get_obstacles()
+        except Exception as exc:
+            self.log_message.emit(f"[map] render worker obstacle error: {exc}")
+            obstacles = ()
+        try:
+            planning_obstacles = self._wm.get_planning_obstacles(
+                now_s=now_s,
+                horizon_ms=250,
+            )
+        except Exception as exc:
+            self.log_message.emit(f"[map] render worker obstacle error: {exc}")
+            planning_obstacles = ()
+
+        try:
+            snap = self._wm.snapshot()
+            ball = snap.ball.position if snap.ball is not None else None
+            ball_visible = bool(snap.ball and snap.ball.visible)
+            ball_vel_mmps = self._wm.get_ball_trajectory(horizon_ms=0)
+            ball_vel_mmps = ball_vel_mmps[1] if ball_vel_mmps else (0.0, 0.0)
+            self._map_render_request_id += 1
+            self._map_render_req_q.put_nowait(
+                {
+                    "request_id": self._map_render_request_id,
+                    "obstacles": tuple(obstacles),
+                    "planning_obstacles": tuple(planning_obstacles),
+                    "ball": ball,
+                    "ball_visible": ball_visible,
+                    "ball_vel_mmps": ball_vel_mmps,
+                    "planner_paths": tuple(self._latest_planner_paths.values()),
+                    "include_voronoi": True,
+                    "density_percent": 10.0,
+                    "max_density_nodes": 80,
+                    "obstacle_cost_weight": 2.0,
+                }
+            )
+            self._map_render_request_pending = True
+        except Exception as exc:
+            self.log_message.emit(f"[map] render worker request error: {exc}")
+
+    def _drain_map_render_worker(self):
+        if self._map_render_resp_q is None:
+            return
+        latest = None
+        while True:
+            try:
+                latest = self._map_render_resp_q.get_nowait()
+            except Exception:
+                break
+        if latest is None:
+            return
+        self._map_render_request_pending = False
+        if latest.get("error"):
+            self.log_message.emit(f"[map] render worker error: {latest['error']}")
+            return
+        self._latest_map_render_data = latest.get("render_data")
+        self._latest_map_render_generation_ms = latest.get("generation_ms")
+        self._latest_voronoi_generation_ms = latest.get("voronoi_generation_ms")
+
+    def _drain_planner_paths(self, now_s: float):
+        if self._planner_path_q is None:
+            return
+        while True:
+            try:
+                update = self._planner_path_q.get_nowait()
+            except Exception:
+                break
+            key = (bool(update.get("is_yellow", True)), int(update.get("robot_id", 0)))
+            self._latest_planner_paths[key] = update
+
+        stale_keys = [
+            key for key, update in self._latest_planner_paths.items()
+            if now_s - float(update.get("timestamp_s", now_s)) > 1.0
+        ]
+        for key in stale_keys:
+            self._latest_planner_paths.pop(key, None)
 
     def _sync_field_geometry(self):
         try:

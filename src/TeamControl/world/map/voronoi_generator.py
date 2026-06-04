@@ -505,6 +505,12 @@ def _build_navigation_graph(
     for (start, end), clearance in unique_edges.items():
         start_id = _node_id(start, node_ids, nodes)
         end_id = _node_id(end, node_ids, nodes)
+        obstacle_risk = _obstacle_proximity_risk(
+            start,
+            end,
+            obstacles,
+            min_clearance_mm=min_clearance_mm,
+        )
         edges.append(
             MapEdge(
                 start_id=start_id,
@@ -515,6 +521,7 @@ def _build_navigation_graph(
                     clearance=clearance,
                     min_clearance_mm=min_clearance_mm,
                     obstacle_cost_weight=obstacle_cost_weight,
+                    obstacle_risk=obstacle_risk,
                 ),
                 clearance=clearance,
             )
@@ -565,13 +572,38 @@ def _edge_cost(
     clearance: float,
     min_clearance_mm: float,
     obstacle_cost_weight: float,
+    obstacle_risk: float = 0.0,
 ) -> float:
     length = _distance(start, end)
     if obstacle_cost_weight <= 0 or clearance == float("inf"):
         return length
     clearance = max(clearance, EPSILON)
-    risk = min_clearance_mm / clearance
+    risk = min_clearance_mm / clearance + obstacle_risk
     return length * (1.0 + obstacle_cost_weight * risk)
+
+
+def _obstacle_proximity_risk(
+    start: Point,
+    end: Point,
+    obstacles: tuple[VoronoiObstacle, ...],
+    *,
+    min_clearance_mm: float,
+) -> float:
+    """Return cumulative risk from every obstacle near this segment."""
+    if not obstacles:
+        return 0.0
+    influence_mm = max(min_clearance_mm * 4.0, 1.0)
+    risk = 0.0
+    for obstacle in obstacles:
+        clearance = (
+            distance_2_segment(obstacle.pos_mm, start, end)
+            - obstacle.radius_mm
+        )
+        if clearance <= 0.0:
+            risk += 2.0
+        elif clearance < influence_mm:
+            risk += (influence_mm - clearance) / influence_mm
+    return risk
 
 
 def _inset_bounds(bounds: Bounds, inset_mm: float) -> Bounds:

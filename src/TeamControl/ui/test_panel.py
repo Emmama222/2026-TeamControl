@@ -695,7 +695,10 @@ class TestPanel(QWidget):
         self._action_status.setText(
             f"Running: {labels.get(mode, mode)} — click STOP to cancel")
         self._log.info(f"Action test started: {labels.get(mode, mode)}")
-        if self._engine and self._engine.current_mode not in ("vision_only",):
+        if self._engine and self._engine.current_mode not in (
+            "vision_only",
+            "voronoi_test",
+        ):
             self._log.info(
                 "(Dispatcher paused for this bot so AI does not override field commands.)")
 
@@ -785,7 +788,10 @@ class TestPanel(QWidget):
             f"color:{SUCCESS}; font-size:12px; padding:4px;")
         self._action_status.setText("Running: Go to Point — click STOP to cancel")
         self._log.info(f"Go to point ({x_mm:.0f}, {y_mm:.0f})")
-        if self._engine and self._engine.current_mode not in ("vision_only",):
+        if self._engine and self._engine.current_mode not in (
+            "vision_only",
+            "voronoi_test",
+        ):
             self._log.info(
                 "(Dispatcher paused for this bot so AI does not override.)")
 
