@@ -16,7 +16,7 @@ class FieldAnalyzer:
             horizon_ms=horizon_ms,
         )
 
-    def score_confidence(self, robot_id, team_is_yellow) -> float:
+    def score_confidence(self, robot_id, isYellow) -> float:
         """
         Estimate shooting confidence.
 
@@ -25,7 +25,7 @@ class FieldAnalyzer:
         """
         return 1.0
 
-    def pass_confidence(self, robot_id1, robot_id2, team_is_yellow) -> float:
+    def pass_confidence(self, robot_id1, robot_id2, isYellow) -> float:
         """
         Estimate passing confidence.
 
@@ -38,10 +38,10 @@ class FieldAnalyzer:
         """Return the predicted ball position and velocity."""
         return self.map.get_ball_trajectory(horizon_ms)
 
-    def robot_trajectory(self, robot_id, team_is_yellow, horizon_ms=20):
+    def robot_trajectory(self, robot_id, isYellow, horizon_ms=20):
         """Return the predicted robot position and velocity."""
         return self.map.get_robot_trajectory(
             robot_id,
-            team_is_yellow,
+            isYellow,
             horizon_ms,
         )

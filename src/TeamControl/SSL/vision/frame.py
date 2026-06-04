@@ -49,8 +49,8 @@ class Frame():
             t_capture=frame_data.t_capture,
             t_sent=frame_data.t_sent,
             balls=frame_data.balls,
-            robots_yellow=Team(frame_data.robots_yellow,team_is_yellow=True),
-            robots_blue=Team(frame_data.robots_blue,team_is_yellow=False),
+            robots_yellow=Team(frame_data.robots_yellow,isYellow=True),
+            robots_blue=Team(frame_data.robots_blue,isYellow=False),
             max_cameras=max_cameras
         )
 
@@ -83,8 +83,8 @@ class Frame():
         for data in new_frame_data.balls:
             self._balls.append(Ball(data))
 
-        self.robots_blue.merge(Team(new_frame_data.robots_blue,team_is_yellow=False))
-        self.robots_yellow.merge(Team(new_frame_data.robots_yellow,team_is_yellow=True))
+        self.robots_blue.merge(Team(new_frame_data.robots_blue,isYellow=False))
+        self.robots_yellow.merge(Team(new_frame_data.robots_yellow,isYellow=True))
         self.t_capture = max(self.t_capture, new_frame_data.t_capture)
         self.t_sent = max(self.t_sent, new_frame_data.t_sent)
         self.cameras.add(new_frame_data.camera_id)

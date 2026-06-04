@@ -13,13 +13,13 @@ def moving_obstacle():
     old = Obstacle(
         timestamp=9.9,
         robot_id=2,
-        team_is_yellow=True,
+        isYellow=True,
         pos_mm=(0.0, 0.0, 0.0),
     )
     new = Obstacle(
         timestamp=10.0,
         robot_id=2,
-        team_is_yellow=True,
+        isYellow=True,
         pos_mm=(100.0, 0.0, 0.0),
     )
     new.update_vel_from(old)

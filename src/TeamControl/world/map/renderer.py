@@ -96,7 +96,7 @@ class Renderer:
         robots = []
         velocity_vectors = []
         for obs in world_map.get_obstacles():
-            color = YELLOW if obs.team_is_yellow else BLUE
+            color = YELLOW if obs.isYellow else BLUE
             center = (obs.pos_mm[0], obs.pos_mm[1])
             robots.append(
                 RenderRobot(

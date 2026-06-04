@@ -18,7 +18,7 @@ class PlanningObstacle:
     """Immutable predicted obstacle passed to a planner."""
 
     robot_id: int
-    team_is_yellow: bool
+    isYellow: bool
     pos_mm: tuple[float, float]
     radius_mm: float
     vel_mmps: tuple[float, float]
@@ -73,7 +73,7 @@ class WorldMap:
         )
         self.obs = self.robots2obs(robots, timestamp, received_at_s)
         self.robots = {
-            (obs.team_is_yellow, obs.robot_id): obs
+            (obs.isYellow, obs.robot_id): obs
             for obs in self.obs
         }
         ball_candidates = getattr(snapshot, "ball_candidates", ())
@@ -94,11 +94,11 @@ class WorldMap:
             obs = Obstacle(
                 timestamp=timestamp,
                 robot_id=robot.id,
-                team_is_yellow=robot.isYellow,
+                isYellow=robot.isYellow,
                 pos_mm=robot.pose,
                 received_at_s=received_at_s,
             )
-            older_obs = self.robots.get((obs.team_is_yellow, obs.robot_id))
+            older_obs = self.robots.get((obs.isYellow, obs.robot_id))
             if older_obs is not None and older_obs.timestamp < obs.timestamp:
                 obs.update_vel_from(older_obs)
             obstacles.append(obs)
@@ -261,10 +261,10 @@ class WorldMap:
     def get_robot_trajectory(
         self,
         robot_id: int,
-        team_is_yellow: bool,
+        isYellow: bool,
         horizon_ms: int | float | None = None,
     ) -> tuple[tuple[float, float], tuple[float, float]] | None:
-        obs = self._get_robot_obstacle(robot_id, team_is_yellow)
+        obs = self._get_robot_obstacle(robot_id, isYellow)
         if obs is None:
             return None
         if horizon_ms is None:
@@ -314,14 +314,14 @@ class WorldMap:
 
         planning_obstacles = []
         for obs in self.obs:
-            if (obs.team_is_yellow, obs.robot_id) in ignore_robots:
+            if (obs.isYellow, obs.robot_id) in ignore_robots:
                 continue
             age_ms = obs.age_s(now_s) * 1000.0
             prediction_horizon_ms = age_ms + horizon_ms
             planning_obstacles.append(
                 PlanningObstacle(
                     robot_id=obs.robot_id,
-                    team_is_yellow=obs.team_is_yellow,
+                    isYellow=obs.isYellow,
                     pos_mm=obs.predicted_pos(prediction_horizon_ms),
                     radius_mm=obs.dynamic_radius(prediction_horizon_ms),
                     vel_mmps=obs.vel_mmps,
@@ -334,14 +334,14 @@ class WorldMap:
     def find_closest_robot_to(
         self,
         start_pos: tuple[float, float],
-        team_is_yellow: Optional[bool] = None,
+        isYellow: Optional[bool] = None,
     ) -> tuple[int, tuple[float, float, float]] | None:
         """Locate the closest robot to start_pos, optionally filtered by team."""
         closest = None
         closest_dist = float("inf")
 
         for obs in self.obs:
-            if team_is_yellow is not None and obs.team_is_yellow != team_is_yellow:
+            if isYellow is not None and obs.isYellow != isYellow:
                 continue
             dist = obs.dist_to(start_pos)
             if dist < closest_dist:
@@ -355,19 +355,19 @@ class WorldMap:
     def get_nearby_teammates(
         self,
         robot_id: int,
-        team_is_yellow: bool,
+        isYellow: bool,
         radius_mm: float = 500,
     ) -> list[int]:
         """Return sorted teammate robot IDs within radius_mm."""
-        robot = self._get_robot_obstacle(robot_id, team_is_yellow)
+        robot = self._get_robot_obstacle(robot_id, isYellow)
         if robot is None:
             return []
 
         nearby = []
         for obs in self.obs:
-            if obs.robot_id == robot_id and obs.team_is_yellow == team_is_yellow:
+            if obs.robot_id == robot_id and obs.isYellow == isYellow:
                 continue
-            if obs.team_is_yellow != team_is_yellow:
+            if obs.isYellow != isYellow:
                 continue
             dist = robot.dist_to(obs.pos_mm[:2])
             if dist <= radius_mm:
@@ -379,17 +379,17 @@ class WorldMap:
     def get_nearby_enemies(
         self,
         robot_id: int,
-        team_is_yellow: bool,
+        isYellow: bool,
         radius_mm: float = 500,
     ) -> list[int]:
         """Return sorted enemy robot IDs within radius_mm."""
-        robot = self._get_robot_obstacle(robot_id, team_is_yellow)
+        robot = self._get_robot_obstacle(robot_id, isYellow)
         if robot is None:
             return []
 
         nearby = []
         for obs in self.obs:
-            if obs.team_is_yellow == team_is_yellow:
+            if obs.isYellow == isYellow:
                 continue
             dist = robot.dist_to(obs.pos_mm[:2])
             if dist <= radius_mm:
@@ -401,9 +401,9 @@ class WorldMap:
     def _get_robot_obstacle(
         self,
         robot_id: int,
-        team_is_yellow: bool,
+        isYellow: bool,
     ) -> Obstacle | None:
-        return self.robots.get((team_is_yellow, robot_id))
+        return self.robots.get((isYellow, robot_id))
 
     def is_path_free(
         self,
@@ -419,7 +419,7 @@ class WorldMap:
             horizon_ms = self.horizon_ms
 
         for obs in self.obs:
-            if (obs.team_is_yellow, obs.robot_id) in ignore_robots:
+            if (obs.isYellow, obs.robot_id) in ignore_robots:
                 continue
             if obs.intersects_path(
                 start_pos_mm=start_pos,

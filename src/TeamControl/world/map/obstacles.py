@@ -13,7 +13,7 @@ BALL_R =  21.5 #mm
 class Obstacle:
     timestamp: float  # seconds
     robot_id: int
-    team_is_yellow: bool
+    isYellow: bool
     pos_mm: tuple[float, float, float]  # mm
     received_at_s: float | None = None  # local Unix time when the frame arrived
     @property
@@ -53,7 +53,7 @@ class Obstacle:
         if (
             not isinstance(old_obs, Obstacle)
             or old_obs.robot_id != self.robot_id
-            or old_obs.team_is_yellow != self.team_is_yellow
+            or old_obs.isYellow != self.isYellow
             or old_obs.timestamp >= self.timestamp
         ):
             raise ValueError("Expected an older observation of the same robot")

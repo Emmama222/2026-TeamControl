@@ -281,6 +281,6 @@ def test_planning_obstacles_can_ignore_the_controlled_robot():
         ignore_robots={(True, 0)},
     )
 
-    assert [(obs.team_is_yellow, obs.robot_id) for obs in planning_obs] == [
+    assert [(obs.isYellow, obs.robot_id) for obs in planning_obs] == [
         (False, 0)
     ]

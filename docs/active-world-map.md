@@ -41,7 +41,7 @@ sources are not required to use the same clock origin.
 ## Robot Tracking
 
 Each fresh robot observation looks backward at the previous observation for the
-same `(team_is_yellow, robot_id)`:
+same `(isYellow, robot_id)`:
 
 ```python
 new_obs.update_vel_from(old_obs)
@@ -77,7 +77,7 @@ Each immutable `PlanningObstacle` contains:
 
 ```text
 robot_id
-team_is_yellow
+isYellow
 pos_mm
 radius_mm
 vel_mmps
