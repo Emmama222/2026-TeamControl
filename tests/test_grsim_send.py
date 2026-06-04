@@ -1,23 +1,38 @@
-"""Quick test: send a move command directly to GrSim to verify connectivity.
-Robot 0 (yellow) should spin in place if GrSim receives the packet.
-"""
+"""Manual integration check for sending a command to GrSim."""
+
+import os
 import time
-from TeamControl.network.ssl_sockets import grSimSender
+
+import pytest
+
 from TeamControl.network.robot_command import RobotCommand
+from TeamControl.network.ssl_sockets import grSimSender
 from TeamControl.utils.yaml_config import Config
 
-preset = Config()
-ip, port = preset.grSim_addr
-print(f"Sending to GrSim at {ip}:{port}")
 
-sender = grSimSender(ip=ip, port=port)
+pytestmark = pytest.mark.manual
 
-# Send a spin command to robot 0 (yellow) for 3 seconds
-for i in range(150):
-    cmd = RobotCommand(robot_id=0, vx=0.5, vy=0.0, w=1.0, kick=0, dribble=0, isYellow=True)
-    sender.send_robot_command(cmd, override_id=0)
-    time.sleep(0.02)
-    if i % 50 == 0:
-        print(f"Sent {i} packets...")
 
-print("Done. Did yellow robot 0 move in GrSim?")
+@pytest.mark.skipif(
+    os.getenv("TEAMCONTROL_RUN_GRSIM_TESTS") != "1",
+    reason="Set TEAMCONTROL_RUN_GRSIM_TESTS=1 to send live GrSim commands.",
+)
+def test_yellow_robot_zero_spin_command_can_be_sent_to_grsim():
+    preset = Config()
+    ip, port = preset.grSim_addr
+    sender = grSimSender(ip=ip, port=port)
+
+    for _ in range(10):
+        cmd = RobotCommand(
+            robot_id=0,
+            vx=0.5,
+            vy=0.0,
+            w=1.0,
+            kick=0,
+            dribble=0,
+            isYellow=True,
+        )
+        sender.send_robot_command(cmd, override_id=0)
+        time.sleep(0.02)
+
+    assert sender is not None

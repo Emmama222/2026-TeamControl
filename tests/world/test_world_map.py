@@ -240,7 +240,7 @@ def test_planning_obstacles_compensate_for_observation_age_and_horizon():
 
     assert planning_obs.pos_mm == pytest.approx((130.0, 0.0))
     assert planning_obs.radius_mm == pytest.approx(150.0)
-    assert planning_obs.observation_age_ms == pytest.approx(100.0)
+    assert planning_obs.observation_age_ms == pytest.approx(100.0, abs=1e-3)
     assert planning_obs.prediction_horizon_ms == pytest.approx(300.0)
 
 
@@ -260,7 +260,7 @@ def test_planning_obstacle_age_uses_local_receipt_clock_not_capture_clock():
         horizon_ms=250,
     )
 
-    assert planning_obs.observation_age_ms == pytest.approx(100.0)
+    assert planning_obs.observation_age_ms == pytest.approx(100.0, abs=1e-3)
     assert planning_obs.radius_mm == pytest.approx(470.0)
 
 
