@@ -269,12 +269,22 @@ class WorldModel:
             ignore_robots=ignore_robots,
         )
 
-    def get_map_render_data(self, now_s=None, horizon_ms=250):
+    def get_map_render_data(
+        self,
+        now_s=None,
+        horizon_ms=250,
+        include_voronoi=False,
+    ):
         """Return serializable debug layers for the Qt map canvas."""
         return self.world_map.get_render_data(
             now_s=now_s,
             horizon_ms=horizon_ms,
+            include_voronoi=include_voronoi,
         )
+
+    def get_last_voronoi_generation_ms(self):
+        """Return latest debug Voronoi overlay generation time, if available."""
+        return getattr(self.world_map, "last_voronoi_generation_ms", None)
 
     # high level
     def get_all_in_team_except(self, us: bool, exclude: list[int]):
