@@ -4,10 +4,10 @@ import time
 from typing import Iterable, Optional
 
 from TeamControl.world.map.geometry import linear_velocity
-from TeamControl.world.map.obstacles import Obstacle
+from TeamControl.world.map.obstacles import Obstacle,ROBOT_RADIUS_MM
 
 
-R = 90.0  # mm - robot radius
+R = ROBOT_RADIUS_MM   # mm - robot radius
 BALL_MIN_CONFIDENCE = 0.1
 BALL_BASE_TOLERANCE_MM = 150.0
 BALL_TOLERANCE_RATE_MMPS = 7000.0

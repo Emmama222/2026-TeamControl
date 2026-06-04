@@ -2,11 +2,11 @@ import time
 from dataclasses import dataclass
 from math import hypot
 from TeamControl.world.map.geometry import distance_2_segment, linear_velocity
-
+from TeamControl.world.field_config import ROBOT_RADIUS_MM, SAFE_MARGIN
 
 ## Standard Robot Radius
-R = 90.0  # mm
-MARGIN = 30  #mm
+R = ROBOT_RADIUS_MM  # mm
+MARGIN = SAFE_MARGIN  #mm
 BALL_R =  21.5 #mm
 
 @dataclass
