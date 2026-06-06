@@ -55,6 +55,18 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Navigation boundary inset from the real field boundary in millimeters.",
     )
     parser.add_argument(
+        "--field-length",
+        type=float,
+        default=FIELD_LENGTH_MM,
+        help="Field length in millimeters. Use the SSL-Vision value for comparison.",
+    )
+    parser.add_argument(
+        "--field-width",
+        type=float,
+        default=FIELD_WIDTH_MM,
+        help="Field width in millimeters. Use the SSL-Vision value for comparison.",
+    )
+    parser.add_argument(
         "--grid-spacing-x",
         type=float,
         default=None,
@@ -157,10 +169,10 @@ def random_obstacles(args: argparse.Namespace) -> tuple[VoronoiObstacle, ...]:
         raise ValueError("random obstacle radius range must be positive and ordered")
 
     field_bounds = (
-        -FIELD_LENGTH_MM / 2.0,
-        FIELD_LENGTH_MM / 2.0,
-        -FIELD_WIDTH_MM / 2.0,
-        FIELD_WIDTH_MM / 2.0,
+        -args.field_length / 2.0,
+        args.field_length / 2.0,
+        -args.field_width / 2.0,
+        args.field_width / 2.0,
     )
     nav_bounds = _inset_bounds(field_bounds, args.inset)
     rng = random.Random(args.seed)
@@ -187,6 +199,8 @@ def main() -> None:
     obstacles = parse_obstacles(args.obstacle) + random_obstacles(args)
     voronoi_map = generate_bounded_voronoi_map(
         args.nodes,
+        field_length_mm=args.field_length,
+        field_width_mm=args.field_width,
         min_clearance_mm=args.clearance,
         boundary_inset_mm=args.inset,
         placement_mode=args.mode,
@@ -212,6 +226,8 @@ def main() -> None:
     )
     print(
         f"Mode={voronoi_map.placement_mode}, "
+        f"field={voronoi_map.field_bounds_mm[1] - voronoi_map.field_bounds_mm[0]:.0f}"
+        f"x{voronoi_map.field_bounds_mm[3] - voronoi_map.field_bounds_mm[2]:.0f} mm, "
         f"inset={voronoi_map.boundary_inset_mm:.0f} mm, "
         f"clearance={voronoi_map.min_clearance_mm:.0f} mm."
     )

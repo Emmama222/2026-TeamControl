@@ -509,22 +509,27 @@ class SimEngine(QObject):
             ball_visible = bool(snap.ball and snap.ball.visible)
             ball_vel_mmps = self._wm.get_ball_trajectory(horizon_ms=0)
             ball_vel_mmps = ball_vel_mmps[1] if ball_vel_mmps else (0.0, 0.0)
+            field = self._wm.get_field_size()
+            field_length_mm = _positive_float(getattr(field, "field_length", None))
+            field_width_mm = _positive_float(getattr(field, "field_width", None))
             self._map_render_request_id += 1
-            self._map_render_req_q.put_nowait(
-                {
-                    "request_id": self._map_render_request_id,
-                    "obstacles": tuple(obstacles),
-                    "planning_obstacles": tuple(planning_obstacles),
-                    "ball": ball,
-                    "ball_visible": ball_visible,
-                    "ball_vel_mmps": ball_vel_mmps,
-                    "planner_paths": tuple(self._latest_planner_paths.values()),
-                    "include_voronoi": True,
-                    "density_percent": 10.0,
-                    "max_density_nodes": 80,
-                    "obstacle_cost_weight": 2.0,
-                }
-            )
+            request = {
+                "request_id": self._map_render_request_id,
+                "obstacles": tuple(obstacles),
+                "planning_obstacles": tuple(planning_obstacles),
+                "ball": ball,
+                "ball_visible": ball_visible,
+                "ball_vel_mmps": ball_vel_mmps,
+                "planner_paths": tuple(self._latest_planner_paths.values()),
+                "include_voronoi": True,
+                "density_percent": 10.0,
+                "max_density_nodes": 80,
+                "obstacle_cost_weight": 2.0,
+            }
+            if field_length_mm is not None and field_width_mm is not None:
+                request["field_length_mm"] = field_length_mm
+                request["field_width_mm"] = field_width_mm
+            self._map_render_req_q.put_nowait(request)
             self._map_render_request_pending = True
         except Exception as exc:
             self.log_message.emit(f"[map] render worker request error: {exc}")
@@ -692,3 +697,12 @@ class SimEngine(QObject):
                 f"[sim] {team} #{robot_id} placed at ({x_mm:.0f}, {y_mm:.0f})")
         except Exception as e:
             self.log_message.emit(f"[sim] Robot placement failed: {e}")
+
+
+def _positive_float(value):
+    if value is None:
+        return None
+    value = float(value)
+    if value <= 0.0:
+        return None
+    return value

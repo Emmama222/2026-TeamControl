@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 from TeamControl.world.map.voronoi_generator import (
     VoronoiObstacle,
@@ -18,7 +19,7 @@ def test_generator_builds_closed_bounded_cells_for_requested_virtual_nodes():
         min_clearance_mm=120.0,
         seed=7,
     )
-    x_min, x_max, y_min, y_max = voronoi_map.bounds_mm
+    x_min, x_max, y_min, y_max = voronoi_map.clipped_bounds_mm
 
     assert len(voronoi_map.sites_mm) == 12
     assert len(voronoi_map.cells) == 12
@@ -164,6 +165,22 @@ def test_world_map_planning_obstacles_can_shape_voronoi_map():
     assert voronoi_map.obstacles[0].label == "Y0"
 
 
+def test_world_map_field_size_shapes_voronoi_bounds():
+    world_map = WorldMap(field=SimpleNamespace(field_length=12000, field_width=8000))
+
+    voronoi_map = generate_voronoi_map_from_world_map(
+        world_map,
+        now_s=1.0,
+        horizon_ms=0,
+        placement_mode="density_grid",
+        density_percent=10.0,
+        boundary_inset_mm=100.0,
+    )
+
+    assert voronoi_map.field_bounds_mm == (-6000.0, 6000.0, -4000.0, 4000.0)
+    assert voronoi_map.bounds_mm == (-5900.0, 5900.0, -3900.0, 3900.0)
+
+
 def test_navigation_bounds_are_inset_from_real_field_bounds():
     voronoi_map = generate_bounded_voronoi_map(
         placement_mode="density_grid",
@@ -173,6 +190,7 @@ def test_navigation_bounds_are_inset_from_real_field_bounds():
 
     assert voronoi_map.field_bounds_mm == (-4500.0, 4500.0, -3000.0, 3000.0)
     assert voronoi_map.bounds_mm == (-4400.0, 4400.0, -2900.0, 2900.0)
+    assert voronoi_map.clipped_bounds_mm == (-4280.0, 4280.0, -2780.0, 2780.0)
     assert voronoi_map.boundary_inset_mm == 100.0
 
 

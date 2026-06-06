@@ -62,6 +62,11 @@ class BoundedVoronoiMap:
         """All sites used by the Voronoi diagram, virtual first."""
         return self.virtual_sites_mm + tuple(obstacle.pos_mm for obstacle in self.obstacles)
 
+    @property
+    def clipped_bounds_mm(self) -> Bounds:
+        """Navigation bounds inset again by clearance for safe cell clipping."""
+        return _inset_bounds(self.bounds_mm, self.min_clearance_mm)
+
     def render_layer(
         self,
         name: str = "Voronoi map",
@@ -148,6 +153,7 @@ def generate_bounded_voronoi_map(
         field_width_mm / 2.0,
     )
     bounds = _inset_bounds(field_bounds, boundary_inset_mm)
+    clipped_bounds = _inset_bounds(bounds, min_clearance_mm)
     sites = _generate_virtual_sites(
         virtual_node_count=virtual_node_count,
         bounds=bounds,
@@ -163,7 +169,7 @@ def generate_bounded_voronoi_map(
     all_sites = sites + tuple(obstacle.pos_mm for obstacle in obstacle_sites)
     cells = _build_cells(
         all_sites,
-        bounds,
+        clipped_bounds,
         virtual_site_count=len(sites),
     )
     nodes, edges = _build_navigation_graph(
@@ -199,6 +205,12 @@ def generate_voronoi_map_from_world_map(
     **kwargs,
 ) -> BoundedVoronoiMap:
     """Generate a Voronoi map using predicted robot obstacles from WorldMap."""
+    field_dimensions = _field_dimensions_from_world_map(world_map)
+    if field_dimensions is not None:
+        field_length_mm, field_width_mm = field_dimensions
+        kwargs.setdefault("field_length_mm", field_length_mm)
+        kwargs.setdefault("field_width_mm", field_width_mm)
+
     return generate_bounded_voronoi_map(
         obstacles=world_map.get_planning_obstacles(
             now_s=now_s,
@@ -207,6 +219,27 @@ def generate_voronoi_map_from_world_map(
         ),
         **kwargs,
     )
+
+
+def _field_dimensions_from_world_map(world_map) -> tuple[float, float] | None:
+    field = getattr(world_map, "field", None)
+    if field is None and hasattr(world_map, "get_field_size"):
+        try:
+            field = world_map.get_field_size()
+        except Exception:
+            field = None
+    if field is None:
+        return None
+
+    length = getattr(field, "field_length", None)
+    width = getattr(field, "field_width", None)
+    if length is None or width is None:
+        return None
+    length = float(length)
+    width = float(width)
+    if length <= 0.0 or width <= 0.0:
+        return None
+    return length, width
 
 
 def normalize_voronoi_obstacles(

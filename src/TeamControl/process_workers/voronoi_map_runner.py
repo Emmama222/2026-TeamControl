@@ -6,6 +6,7 @@ import time
 from multiprocessing import Queue
 
 from TeamControl.process_workers.worker import BaseWorker
+from TeamControl.world.field_config import FIELD_LENGTH_MM, FIELD_WIDTH_MM
 from TeamControl.world.map.renderer import (
     BALL,
     BLUE,
@@ -144,18 +145,23 @@ def _build_render_data(request: dict) -> tuple[MapRenderData, float | None]:
     ]
 
     path_polylines = []
+    field_bounds = _field_bounds_from_request(request)
     for path in planner_paths:
         points = tuple(tuple(point[:2]) for point in path.get("points", ()))
         if len(points) < 2:
             continue
         color = YELLOW if path.get("is_yellow", True) else BLUE
-        path_polylines.append(
-            RenderPolyline(
-                points_mm=points,
-                color=color,
-                closed=False,
+        for start, end in zip(points, points[1:]):
+            clipped = _clip_segment_to_bounds(start, end, field_bounds)
+            if clipped is None:
+                continue
+            path_polylines.append(
+                RenderPolyline(
+                    points_mm=clipped,
+                    color=color,
+                    closed=False,
+                )
             )
-        )
     if path_polylines:
         layers.append(
             RenderLayer(
@@ -168,12 +174,14 @@ def _build_render_data(request: dict) -> tuple[MapRenderData, float | None]:
     voronoi_ms = None
     if request.get("include_voronoi", False):
         started_s = time.perf_counter()
+        field_kwargs = _field_dimension_kwargs(request)
         voronoi_map = generate_bounded_voronoi_map(
             placement_mode="density_grid",
             density_percent=float(request.get("density_percent", 10.0)),
             max_density_nodes=int(request.get("max_density_nodes", 80)),
             obstacle_cost_weight=float(request.get("obstacle_cost_weight", 2.0)),
             obstacles=planning_obstacles,
+            **field_kwargs,
         )
         voronoi_ms = (time.perf_counter() - started_s) * 1000.0
         layers.append(
@@ -184,6 +192,77 @@ def _build_render_data(request: dict) -> tuple[MapRenderData, float | None]:
         )
 
     return MapRenderData(layers=tuple(layers)), voronoi_ms
+
+
+def _field_dimension_kwargs(request: dict) -> dict[str, float]:
+    length = _positive_float(request.get("field_length_mm"))
+    width = _positive_float(request.get("field_width_mm"))
+    if length is None or width is None:
+        return {}
+    return {
+        "field_length_mm": length,
+        "field_width_mm": width,
+    }
+
+
+def _field_bounds_from_request(request: dict) -> tuple[float, float, float, float]:
+    length = _positive_float(request.get("field_length_mm")) or float(FIELD_LENGTH_MM)
+    width = _positive_float(request.get("field_width_mm")) or float(FIELD_WIDTH_MM)
+    return (
+        -length / 2.0,
+        length / 2.0,
+        -width / 2.0,
+        width / 2.0,
+    )
+
+
+def _clip_segment_to_bounds(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    bounds: tuple[float, float, float, float],
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    x_min, x_max, y_min, y_max = bounds
+    sx, sy = float(start[0]), float(start[1])
+    ex, ey = float(end[0]), float(end[1])
+    dx = ex - sx
+    dy = ey - sy
+    t0 = 0.0
+    t1 = 1.0
+
+    for p, q in (
+        (-dx, sx - x_min),
+        (dx, x_max - sx),
+        (-dy, sy - y_min),
+        (dy, y_max - sy),
+    ):
+        if abs(p) < 1e-9:
+            if q < 0.0:
+                return None
+            continue
+        r = q / p
+        if p < 0.0:
+            if r > t1:
+                return None
+            t0 = max(t0, r)
+        else:
+            if r < t0:
+                return None
+            t1 = min(t1, r)
+
+    clipped_start = (sx + dx * t0, sy + dy * t0)
+    clipped_end = (sx + dx * t1, sy + dy * t1)
+    if clipped_start == clipped_end:
+        return None
+    return clipped_start, clipped_end
+
+
+def _positive_float(value) -> float | None:
+    if value is None:
+        return None
+    value = float(value)
+    if value <= 0.0:
+        return None
+    return value
 
 
 VoronoiMapWorker = WorldMapRenderWorker

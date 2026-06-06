@@ -254,10 +254,9 @@ def _draw_field(ax, voronoi_map: BoundedVoronoiMap, field_geometry):
             zorder=2,
         )
     )
-    clipped_x_min = nav_x_min + voronoi_map.min_clearance_mm
-    clipped_x_max = nav_x_max - voronoi_map.min_clearance_mm
-    clipped_y_min = nav_y_min + voronoi_map.min_clearance_mm
-    clipped_y_max = nav_y_max - voronoi_map.min_clearance_mm
+    clipped_x_min, clipped_x_max, clipped_y_min, clipped_y_max = (
+        voronoi_map.clipped_bounds_mm
+    )
     if clipped_x_min < clipped_x_max and clipped_y_min < clipped_y_max:
         ax.add_patch(
             Rectangle(

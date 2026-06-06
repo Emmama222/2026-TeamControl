@@ -276,3 +276,7 @@ When `planner_output.is_path_free` is `True`, the robot is using the direct
 free path, so the planned-path debug layer receives an empty point list for that
 robot. This clears any stale reroute polyline instead of drawing a direct-target
 line as a planned route.
+
+For display only, planned-path polylines are clipped to the current field
+rectangle before rendering. This prevents off-field robot observations or stale
+route points from drawing large floating blue/yellow shapes outside the field.

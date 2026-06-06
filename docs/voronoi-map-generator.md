@@ -10,11 +10,21 @@ Generate a closed, bounded Voronoi navigation map for the SSL field:
 - Default navigation inset: `100 mm`
 - Default navigation bounds: `(-4400, 4400, -2900, 2900)`
 - Default clearance: `ROBOT_RADIUS_MM + SAFE_MARGIN`, currently `120 mm`
+- Default clipped bounds: `(-4280, 4280, -2780, 2780)`
 - Output: closed Voronoi cells, graph nodes, and safe graph edges
 
 The inset is separate from the field drawing. The PNG shows the full field, but
 the navigation map is generated inside the inset rectangle so a robot following
 the map does not plan directly on the field boundary.
+
+Voronoi cells are clipped to the clearance-clipped bounds, not the larger inset
+navigation bounds. That keeps the blue outer Voronoi box aligned with the safe
+yellow perimeter corridor.
+
+In realtime Map Debug, the Voronoi boundary is generated from the latest
+SSL-Vision `FieldSize.field_length` and `FieldSize.field_width`. If vision has
+not supplied geometry yet, the generator falls back to the constants in
+`field_config.py`.
 
 ## Files
 
@@ -39,15 +49,15 @@ the map does not plan directly on the field boundary.
 - White lines: field markings
 - Gray rectangles: goals
 - Dashed yellow rectangle: inset navigation bounds
-- Solid orange rectangle: clearance-clipped bounds used for safe perimeter edges
-- Blue lines: closed Voronoi cell boundaries
+- Solid orange rectangle: clearance-clipped bounds used for cell clipping and safe perimeter edges
+- Blue lines: closed Voronoi cell boundaries, clipped to the orange/safe boundary
 - Yellow lines: candidate navigation edges that passed clearance
 - Red dots: virtual sites
 - Purple dots/circles: obstacle centers and inflated obstacle keep-out regions
 
 Blue does not mean unsafe by itself; it means "cell geometry." A line becomes
-yellow only when it is part of the navigation graph. Boundary-adjacent cell
-edges often stay blue because the literal cell wall has no outward clearance.
+yellow only when it is part of the navigation graph. The outer blue cell box is
+now clipped onto the same clearance boundary as the yellow safe perimeter.
 
 To make the outer range easier to navigate on clear maps, the generator adds
 safe yellow perimeter corridors just inside the navigation bounds. The orange
@@ -152,6 +162,12 @@ For visual exploration:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\render_voronoi_png.py --density 10
+```
+
+To compare against a specific SSL-Vision field size:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\render_voronoi_png.py --density 10 --field-length 12000 --field-width 8000
 ```
 
 For a denser but still practical map:
