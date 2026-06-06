@@ -67,7 +67,7 @@ Notes:
 When the planner receives a target point, it first checks whether the target is
 inside the playable area.
 
-For now, playable area means the field rectangle.
+The first clamp is the field rectangle.
 
 Default field:
 
@@ -106,7 +106,8 @@ This keeps the planner aligned with the existing obstacle model in
 If the direct path is free:
 
 ```text
-return [target_pos]
+active_target_pose = target_pos
+waypoints = []
 ```
 
 No Dijkstra search is needed.
@@ -118,19 +119,33 @@ this decision as:
 planner_output.is_path_free
 ```
 
-If `is_path_free` is `True`, `active_target_pose` is the original target and no
-replan is performed. If it is `False`, the manager checks whether an existing
-waypoint path can still be used before running a fresh Dijkstra plan.
+If `is_path_free` is `True`, `active_target_pose` is the field-clamped target
+and no replan is performed. The planner also clears any previous planned
+waypoints in this case. If it is `False`, the manager checks whether an
+existing waypoint path can still be used before running a fresh Dijkstra plan.
 
 ## Rule 2a: Reuse Existing Path When Valid
 
 If the direct path is not free, the planner may reuse a previous planned path
 instead of rebuilding from scratch.
 
-The cached path is valid only if all of these are true:
+The cached path is stored as a queue of remaining waypoints. When the controller
+reports `robot_reached_current_waypoint`, the manager pops the first waypoint
+from that queue before deciding the next active target.
+
+Every tick then checks the direct path to the final goal:
+
+- If the direct path is free, clear all queued waypoints and return the final
+  target directly.
+- If the direct path is blocked and the next queued waypoint is still reachable,
+  keep following that queued waypoint.
+- If the direct path becomes blocked again after a direct-free tick, the queue
+  will be empty, so the planner generates a fresh route.
+
+The cached queue is valid only if all of these are true:
 
 1. The new target is still within the dead-zone radius of the last target.
-2. There are previous waypoints or a previous path planned within deadzone target.
+2. There are remaining queued waypoints for the similar target.
 3. The direct path from the current position to the next waypoint is still free.
 
 If any check fails, the cached path is invalid and the planner must generate a
@@ -157,8 +172,9 @@ target_dead_zone_mm = 150.0
 When direct path and cached path both fail:
 
 1. Generate or refresh the obstacle-aware Voronoi map.
-2. Append the final target point if it is not already reached.
-3. Cache the target and generated waypoints in planner state.
+2. Build the obstacle-aware navigation graph.
+3. Append the final target point if it is not already reached.
+4. Cache the target and generated waypoints in planner state.
 
 ## Expected Public API
 
@@ -218,7 +234,7 @@ planner_output = planner.plan(
 
 `planner_output.active_target_pose` is the target the PD Controller should
 track. If there is an active waypoint, it is returned first. If the direct path
-is free, the original target is returned.
+is free, the field-clamped target is returned.
 
 `WorldModel` should provide world snapshots, obstacle snapshots, and render
 data. The planner API owns route state and waypoint decisions. This keeps the
@@ -252,7 +268,11 @@ The path layer contains:
 
 - the robot's current position
 - the active waypoint list, if a Voronoi route is being followed
-- the final active target when the direct path is free
 
 This layer is separate from the yellow Voronoi graph edges. It shows the actual
 route the robot process is currently using.
+
+When `planner_output.is_path_free` is `True`, the robot is using the direct
+free path, so the planned-path debug layer receives an empty point list for that
+robot. This clears any stale reroute polyline instead of drawing a direct-target
+line as a planned route.

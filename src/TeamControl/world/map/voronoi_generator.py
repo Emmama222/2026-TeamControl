@@ -118,6 +118,7 @@ def generate_bounded_voronoi_map(
     max_density_nodes: int = 240,
     obstacles: Iterable[VoronoiObstacle | object] = (),
     obstacle_cost_weight: float = 0.0,
+    include_perimeter_edges: bool = True,
     seed: int | None = None,
 ) -> BoundedVoronoiMap:
     """
@@ -172,6 +173,7 @@ def generate_bounded_voronoi_map(
         min_clearance_mm=min_clearance_mm,
         obstacles=obstacle_sites,
         obstacle_cost_weight=obstacle_cost_weight,
+        include_perimeter_edges=include_perimeter_edges,
     )
 
     return BoundedVoronoiMap(
@@ -482,6 +484,7 @@ def _build_navigation_graph(
     min_clearance_mm: float,
     obstacles: tuple[VoronoiObstacle, ...],
     obstacle_cost_weight: float,
+    include_perimeter_edges: bool,
 ) -> tuple[tuple[MapNode, ...], tuple[MapEdge, ...]]:
     node_ids: dict[Point, int] = {}
     nodes: list[MapNode] = []
@@ -497,9 +500,33 @@ def _build_navigation_graph(
             obstacle_clearance = obstacle_clearance_mm(start, end, obstacles)
             clearance = min(clearance, obstacle_clearance)
             if clearance + EPSILON < min_clearance_mm:
-                continue
+                clipped = _clip_segment_to_inset_bounds(
+                    start,
+                    end,
+                    bounds,
+                    min_clearance_mm,
+                )
+                if clipped is None:
+                    continue
+                start, end = clipped
+                if _distance(start, end) < EPSILON:
+                    continue
+                clearance = edge_clearance_mm(start, end, sites, bounds)
+                obstacle_clearance = obstacle_clearance_mm(start, end, obstacles)
+                clearance = min(clearance, obstacle_clearance)
+                if clearance + EPSILON < min_clearance_mm:
+                    continue
             key = _segment_key(start, end)
             unique_edges[key] = max(clearance, unique_edges.get(key, 0.0))
+
+    if include_perimeter_edges:
+        _add_perimeter_edges(
+            unique_edges,
+            sites,
+            bounds,
+            min_clearance_mm=min_clearance_mm,
+            obstacles=obstacles,
+        )
 
     edges: list[MapEdge] = []
     for (start, end), clearance in unique_edges.items():
@@ -530,7 +557,87 @@ def _build_navigation_graph(
     return tuple(nodes), tuple(edges)
 
 
-def _node_id(point: Point, node_ids: dict[Point, int], nodes: list[MapNode]) -> int:
+def _clip_segment_to_inset_bounds(
+    start: Point,
+    end: Point,
+    bounds: Bounds,
+    inset_mm: float,
+) -> tuple[Point, Point] | None:
+    """Clip a segment to the clearance-inset bounds."""
+    try:
+        x_min, x_max, y_min, y_max = _inset_bounds(bounds, inset_mm)
+    except ValueError:
+        return None
+
+    sx, sy = start
+    ex, ey = end
+    dx = ex - sx
+    dy = ey - sy
+    t0 = 0.0
+    t1 = 1.0
+
+    for p, q in (
+        (-dx, sx - x_min),
+        (dx, x_max - sx),
+        (-dy, sy - y_min),
+        (dy, y_max - sy),
+    ):
+        if abs(p) < EPSILON:
+            if q < 0.0:
+                return None
+            continue
+        r = q / p
+        if p < 0.0:
+            if r > t1:
+                return None
+            t0 = max(t0, r)
+        else:
+            if r < t0:
+                return None
+            t1 = min(t1, r)
+
+    clipped_start = (sx + dx * t0, sy + dy * t0)
+    clipped_end = (sx + dx * t1, sy + dy * t1)
+    if _distance(clipped_start, clipped_end) < EPSILON:
+        return None
+    return clipped_start, clipped_end
+
+
+def _add_perimeter_edges(
+    unique_edges: dict[tuple[Point, Point], float],
+    sites: tuple[Point, ...],
+    bounds: Bounds,
+    *,
+    min_clearance_mm: float,
+    obstacles: tuple[VoronoiObstacle, ...],
+) -> None:
+    """Add a safe rectangular corridor just inside the navigation bounds."""
+    try:
+        corridor = _inset_bounds(bounds, min_clearance_mm)
+    except ValueError:
+        return
+
+    x_min, x_max, y_min, y_max = corridor
+    points = (
+        (x_min, y_min),
+        (x_max, y_min),
+        (x_max, y_max),
+        (x_min, y_max),
+    )
+    for index, start in enumerate(points):
+        end = points[(index + 1) % len(points)]
+        clearance = edge_clearance_mm(start, end, sites, bounds)
+        clearance = min(clearance, obstacle_clearance_mm(start, end, obstacles))
+        if clearance + EPSILON < min_clearance_mm:
+            continue
+        key = _segment_key(start, end)
+        unique_edges[key] = max(clearance, unique_edges.get(key, 0.0))
+
+def _node_id(
+    point: Point,
+    node_ids: dict[Point, int],
+    nodes: list[MapNode],
+) -> int:
     point = _rounded_point(point)
     node_id = node_ids.get(point)
     if node_id is None:

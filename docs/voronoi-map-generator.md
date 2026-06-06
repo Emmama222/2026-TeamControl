@@ -39,11 +39,19 @@ the map does not plan directly on the field boundary.
 - White lines: field markings
 - Gray rectangles: goals
 - Dashed yellow rectangle: inset navigation bounds
+- Solid orange rectangle: clearance-clipped bounds used for safe perimeter edges
 - Blue lines: closed Voronoi cell boundaries
 - Yellow lines: candidate navigation edges that passed clearance
 - Red dots: virtual sites
 - Purple dots/circles: obstacle centers and inflated obstacle keep-out regions
-- Black dots: navigation graph nodes
+
+Blue does not mean unsafe by itself; it means "cell geometry." A line becomes
+yellow only when it is part of the navigation graph. Boundary-adjacent cell
+edges often stay blue because the literal cell wall has no outward clearance.
+
+To make the outer range easier to navigate on clear maps, the generator adds
+safe yellow perimeter corridors just inside the navigation bounds. The orange
+rectangle shows that clearance-clipped perimeter region explicitly.
 
 ## Placement Modes
 
@@ -130,6 +138,10 @@ distance(edge, obstacle_center) - obstacle_radius >= min_clearance_mm
 
 Edges that sit directly on the inset boundary are usually rejected because they
 have no room to move farther outward.
+
+The perimeter corridor is different from those literal boundary edges. It is
+offset inward by the requested clearance, so it can be drawn as a solid yellow
+navigation edge when the boundary area is clear.
 
 This is conservative. It is better for a candidate map to be sparse and safe
 than dense and unsafe.

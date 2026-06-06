@@ -97,7 +97,7 @@ class VoronoiDijkstraPlanner:
         ):
             return PlanResult(
                 target_mm=target,
-                waypoints_mm=(target,),
+                waypoints_mm=(),
                 used_direct_path=True,
             )
 
@@ -275,16 +275,16 @@ class VoronoiDijkstraPlanner:
         return path
 
 
+def _point2(point: tuple[float, ...] | list[float]) -> Point:
+    return (float(point[0]), float(point[1]))
+
+
 def clamp_to_field(point: Point) -> Point:
     """Clamp a point to the full playable field rectangle."""
     return (
         max(FIELD_X_MIN, min(FIELD_X_MAX, float(point[0]))),
         max(FIELD_Y_MIN, min(FIELD_Y_MAX, float(point[1]))),
     )
-
-
-def _point2(point: tuple[float, ...] | list[float]) -> Point:
-    return (float(point[0]), float(point[1]))
 
 
 def _distance(a: Point, b: Point) -> float:

@@ -113,18 +113,6 @@ def save_voronoi_map_plot(
                 zorder=8,
             )
 
-    if voronoi_map.nodes:
-        node_xs = [node.x for node in voronoi_map.nodes]
-        node_ys = [node.y for node in voronoi_map.nodes]
-        ax.scatter(
-            node_xs,
-            node_ys,
-            c="#111111",
-            s=8,
-            label="safe graph nodes",
-            zorder=6,
-        )
-
     ax.legend(loc="upper right")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
@@ -266,6 +254,23 @@ def _draw_field(ax, voronoi_map: BoundedVoronoiMap, field_geometry):
             zorder=2,
         )
     )
+    clipped_x_min = nav_x_min + voronoi_map.min_clearance_mm
+    clipped_x_max = nav_x_max - voronoi_map.min_clearance_mm
+    clipped_y_min = nav_y_min + voronoi_map.min_clearance_mm
+    clipped_y_max = nav_y_max - voronoi_map.min_clearance_mm
+    if clipped_x_min < clipped_x_max and clipped_y_min < clipped_y_max:
+        ax.add_patch(
+            Rectangle(
+                (clipped_x_min, clipped_y_min),
+                clipped_x_max - clipped_x_min,
+                clipped_y_max - clipped_y_min,
+                fill=False,
+                edgecolor="#e89623",
+                linewidth=1.6,
+                alpha=0.95,
+                zorder=2,
+            )
+        )
 
     return {
         "field_color": field_color,

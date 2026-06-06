@@ -1,4 +1,7 @@
+from queue import Queue
+
 from TeamControl.robot.voronoi_navigator import (
+    _publish_planned_path,
     _robot_is_in_front_of_possessor,
     _steal_ignore_keys,
 )
@@ -26,6 +29,55 @@ class _Robots:
 class _Cache:
     def __init__(self, poses):
         self.robots = _Robots(poses)
+
+
+class _Plan:
+    def __init__(self, *, is_path_free, waypoints=(), active_target_pose=None):
+        self.is_path_free = is_path_free
+        self.waypoints = waypoints
+        self.active_target_pose = active_target_pose
+        self.need_reroute = False
+        self.did_reroute = False
+
+
+def test_direct_free_path_publishes_empty_planned_path():
+    planner_path_q = Queue()
+
+    _publish_planned_path(
+        planner_path_q,
+        robot_id=0,
+        is_yellow=True,
+        robot_pose=(0.0, 0.0, 0.0),
+        plan=_Plan(
+            is_path_free=True,
+            active_target_pose=(1000.0, 0.0, 0.0),
+        ),
+        now_s=1.0,
+    )
+
+    update = planner_path_q.get_nowait()
+    assert update["points"] == ()
+    assert update["is_path_free"] is True
+
+
+def test_rerouted_path_publishes_robot_pose_and_waypoints():
+    planner_path_q = Queue()
+
+    _publish_planned_path(
+        planner_path_q,
+        robot_id=0,
+        is_yellow=True,
+        robot_pose=(0.0, 0.0, 0.0),
+        plan=_Plan(
+            is_path_free=False,
+            waypoints=((100.0, 0.0, 0.0), (200.0, 0.0, 0.0)),
+        ),
+        now_s=1.0,
+    )
+
+    update = planner_path_q.get_nowait()
+    assert update["points"] == ((0.0, 0.0), (100.0, 0.0), (200.0, 0.0))
+    assert update["is_path_free"] is False
 
 
 def test_robot_in_front_of_possessor_rule():

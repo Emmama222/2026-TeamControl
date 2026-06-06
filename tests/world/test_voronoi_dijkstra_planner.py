@@ -21,7 +21,35 @@ def test_voronoi_planner_clamps_target_and_uses_direct_path():
 
     assert result.used_direct_path is True
     assert result.target_mm == (FIELD_X_MAX, FIELD_Y_MIN)
-    assert result.waypoints_mm == (result.target_mm,)
+    assert result.waypoints_mm == ()
+
+
+def test_voronoi_planner_allows_main_field_robot_to_target_penalty_box_for_now():
+    world_map = WorldMap()
+    planner = VoronoiDijkstraPlanner()
+
+    result = planner.plan(
+        world_map,
+        (-2500.0, 0.0),
+        (-4000.0, 0.0),
+    )
+
+    assert result.used_direct_path is True
+    assert result.target_mm == (-4000.0, 0.0)
+
+
+def test_voronoi_planner_allows_penalty_robot_to_target_main_field_for_now():
+    world_map = WorldMap()
+    planner = VoronoiDijkstraPlanner()
+
+    result = planner.plan(
+        world_map,
+        (-4000.0, 0.0),
+        (0.0, 0.0),
+    )
+
+    assert result.used_direct_path is True
+    assert result.target_mm == (0.0, 0.0)
 
 
 def test_voronoi_planner_reuses_valid_previous_path_for_similar_target():

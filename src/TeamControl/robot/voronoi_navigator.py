@@ -176,17 +176,18 @@ def _publish_planned_path(
 ) -> None:
     if planner_path_q is None:
         return
-    points = [(float(robot_pose[0]), float(robot_pose[1]))]
-    if plan.waypoints:
-        points.extend((float(point[0]), float(point[1])) for point in plan.waypoints)
-    elif plan.active_target_pose is not None:
-        points.append((float(plan.active_target_pose[0]), float(plan.active_target_pose[1])))
+    points = ()
+    if not plan.is_path_free and plan.waypoints:
+        points = (
+            (float(robot_pose[0]), float(robot_pose[1])),
+            *((float(point[0]), float(point[1])) for point in plan.waypoints),
+        )
     try:
         planner_path_q.put_nowait(
             {
                 "robot_id": int(robot_id),
                 "is_yellow": bool(is_yellow),
-                "points": tuple(points),
+                "points": points,
                 "timestamp_s": float(now_s),
                 "is_path_free": bool(plan.is_path_free),
                 "need_reroute": bool(plan.need_reroute),

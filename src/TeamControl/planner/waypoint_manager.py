@@ -10,7 +10,13 @@ from TeamControl.planner.voronoi_dijkstra import (
     PlannerState,
     VoronoiDijkstraPlanner,
 )
-from TeamControl.world.field_config import ROBOT_RADIUS_MM
+from TeamControl.world.field_config import (
+    FIELD_X_MAX,
+    FIELD_X_MIN,
+    FIELD_Y_MAX,
+    FIELD_Y_MIN,
+    ROBOT_RADIUS_MM,
+)
 from TeamControl.world.map.geometry import distance_2_segment
 from TeamControl.world.map.voronoi_generator import VoronoiObstacle
 
@@ -85,14 +91,13 @@ class VoronoiWaypointManager:
         state = self._state_by_robot.setdefault(robot_key, _WaypointState())
 
         if planner_input.robot_reached_current_waypoint:
-            state.current_waypoint_index = min(
-                state.current_waypoint_index + 1,
-                len(state.waypoints),
-            )
+            state.waypoints = state.waypoints[1:]
+            state.current_waypoint_index = 0
 
         start = _pose_xy(planner_input.current_pose)
-        target_pose = _pose3(planner_input.target_pose)
-        target = _pose_xy(target_pose)
+        requested_target_pose = _pose3(planner_input.target_pose)
+        target = clamp_to_field(_pose_xy(requested_target_pose))
+        target_pose = _with_heading(target, requested_target_pose[2])
         active_waypoint = self._active_waypoint(state)
         active_target = _pose_xy(active_waypoint) if active_waypoint else target
         path_map = planner_input.world_map or _ObstaclePathMap(
@@ -130,7 +135,7 @@ class VoronoiWaypointManager:
                 horizon_ms=self.horizon_ms,
             )
         )
-        route_finished = state.current_waypoint_index >= len(state.waypoints)
+        route_finished = not state.waypoints
         need_reroute = (
             (not is_path_free)
             and (target_moved or route_finished or active_route_blocked)
@@ -192,8 +197,8 @@ class VoronoiWaypointManager:
         )
 
     def _active_waypoint(self, state: _WaypointState) -> Pose2D | None:
-        if state.current_waypoint_index < len(state.waypoints):
-            return state.waypoints[state.current_waypoint_index]
+        if state.waypoints:
+            return state.waypoints[0]
         return None
 
 
@@ -337,6 +342,13 @@ def _pose3(pose: Pose2D | Point2D) -> Pose2D:
 
 def _with_heading(point: Point2D, heading: float) -> Pose2D:
     return (float(point[0]), float(point[1]), float(heading))
+
+
+def clamp_to_field(point: Point2D) -> Point2D:
+    return (
+        max(FIELD_X_MIN, min(FIELD_X_MAX, float(point[0]))),
+        max(FIELD_Y_MIN, min(FIELD_Y_MAX, float(point[1]))),
+    )
 
 
 def _distance(a: Point2D, b: Point2D) -> float:

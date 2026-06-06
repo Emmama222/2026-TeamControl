@@ -25,6 +25,22 @@ def test_waypoint_manager_returns_original_target_when_direct_path_is_free():
     assert output.active_target_pose == (1000.0, 0.0, 0.2)
 
 
+def test_waypoint_manager_allows_penalty_box_target_for_now():
+    manager = VoronoiWaypointManager()
+
+    output = manager.update(
+        PlannerInput(
+            robot_id=0,
+            is_yellow=True,
+            current_pose=(-2500.0, 0.0, 0.0),
+            target_pose=(-4000.0, 0.0, 0.2),
+        )
+    )
+
+    assert output.is_path_free is True
+    assert output.active_target_pose == (-4000.0, 0.0, 0.2)
+
+
 def test_waypoint_manager_reroutes_when_direct_path_is_blocked():
     now_s = time.time()
     world_map = WorldMap()
@@ -58,7 +74,7 @@ def test_waypoint_manager_reroutes_when_direct_path_is_blocked():
     assert output.active_target_pose == output.waypoints[0]
 
 
-def test_waypoint_manager_advances_current_waypoint_when_pd_reaches_it():
+def test_waypoint_manager_pops_current_waypoint_when_pd_reaches_it():
     now_s = time.time()
     world_map = WorldMap()
     world_map.obs = [
@@ -94,8 +110,51 @@ def test_waypoint_manager_advances_current_waypoint_when_pd_reaches_it():
         )
     )
 
-    assert second.current_waypoint_index == 1
-    assert second.active_target_pose == second.waypoints[1]
+    assert second.current_waypoint_index == 0
+    assert second.waypoints == first.waypoints[1:]
+    assert second.active_target_pose == second.waypoints[0]
+
+
+def test_waypoint_manager_clears_waypoints_when_direct_path_reopens_then_replans():
+    manager = VoronoiWaypointManager(density_percent=60, max_density_nodes=120)
+    obstacle = ((0.0, 0.0, 120.0),)
+
+    blocked = manager.update(
+        PlannerInput(
+            robot_id=0,
+            is_yellow=True,
+            current_pose=(-2000.0, 0.0),
+            target_pose=(2000.0, 0.0),
+            obstacles=obstacle,
+        )
+    )
+    direct = manager.update(
+        PlannerInput(
+            robot_id=0,
+            is_yellow=True,
+            current_pose=(-2000.0, 0.0),
+            target_pose=(2000.0, 0.0),
+            obstacles=(),
+        )
+    )
+    blocked_again = manager.update(
+        PlannerInput(
+            robot_id=0,
+            is_yellow=True,
+            current_pose=(-2000.0, 0.0),
+            target_pose=(2000.0, 0.0),
+            obstacles=obstacle,
+        )
+    )
+
+    assert blocked.is_path_free is False
+    assert blocked.waypoints
+    assert direct.is_path_free is True
+    assert direct.waypoints == ()
+    assert direct.active_target_pose == (2000.0, 0.0, 0.0)
+    assert blocked_again.is_path_free is False
+    assert blocked_again.did_reroute is True
+    assert blocked_again.waypoints
 
 
 def test_waypoint_manager_accepts_explicit_tuple_obstacles():

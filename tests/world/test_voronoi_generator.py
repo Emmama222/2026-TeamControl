@@ -214,6 +214,69 @@ def test_render_layer_contains_cell_and_navigation_polylines():
     assert len(layer.polylines) >= len(voronoi_map.cells)
 
 
+def test_clear_map_adds_safe_perimeter_navigation_edges():
+    min_clearance_mm = 120.0
+    voronoi_map = generate_bounded_voronoi_map(
+        placement_mode="density_grid",
+        density_percent=10.0,
+        min_clearance_mm=min_clearance_mm,
+        boundary_inset_mm=100.0,
+    )
+    node_by_id = {node.id: node for node in voronoi_map.nodes}
+    x_min, x_max, y_min, y_max = voronoi_map.bounds_mm
+    perimeter_points = {
+        (x_min + min_clearance_mm, y_min + min_clearance_mm),
+        (x_max - min_clearance_mm, y_min + min_clearance_mm),
+        (x_max - min_clearance_mm, y_max - min_clearance_mm),
+        (x_min + min_clearance_mm, y_max - min_clearance_mm),
+    }
+    perimeter_edges = []
+    for edge in voronoi_map.edges:
+        start = node_by_id[edge.start_id]
+        end = node_by_id[edge.end_id]
+        if (start.x, start.y) in perimeter_points and (end.x, end.y) in perimeter_points:
+            perimeter_edges.append(edge)
+
+    assert len(perimeter_edges) == 4
+
+
+def test_boundary_touching_cell_edges_are_clipped_into_safe_navigation_edges():
+    voronoi_map = generate_bounded_voronoi_map(
+        placement_mode="density_grid",
+        density_percent=10.0,
+        min_clearance_mm=120.0,
+        boundary_inset_mm=100.0,
+    )
+
+    assert len(voronoi_map.edges) > 6
+
+
+def test_obstacle_can_block_perimeter_navigation_edge():
+    min_clearance_mm = 120.0
+    obstacle = VoronoiObstacle((0.0, -2780.0), radius_mm=300.0, label="bottom")
+    voronoi_map = generate_bounded_voronoi_map(
+        placement_mode="density_grid",
+        density_percent=10.0,
+        min_clearance_mm=min_clearance_mm,
+        boundary_inset_mm=100.0,
+        obstacles=(obstacle,),
+    )
+    node_by_id = {node.id: node for node in voronoi_map.nodes}
+    x_min, x_max, y_min, _ = voronoi_map.bounds_mm
+    bottom_y = y_min + min_clearance_mm
+    bottom_start = (x_min + min_clearance_mm, bottom_y)
+    bottom_end = (x_max - min_clearance_mm, bottom_y)
+
+    assert not any(
+        {
+            (node_by_id[edge.start_id].x, node_by_id[edge.start_id].y),
+            (node_by_id[edge.end_id].x, node_by_id[edge.end_id].y),
+        }
+        == {bottom_start, bottom_end}
+        for edge in voronoi_map.edges
+    )
+
+
 def test_visual_debug_plot_can_be_saved(tmp_path):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg")
