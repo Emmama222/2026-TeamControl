@@ -12,7 +12,7 @@ import math
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.world.transform_cords import world2robot
 from TeamControl.robot.ball_nav import (
-    clamp, move_toward, wall_brake, rotation_compensate,
+    clamp, move_toward, rotation_compensate,
 )
 from TeamControl.robot.navigator import _compute_avoidance
 from TeamControl.robot.kick_engine import KickState, kick_tick
@@ -25,7 +25,7 @@ from TeamControl.robot.constants import (
     CRUISE_SPEED, CHARGE_SPEED, DRIBBLE_SPEED,
     MAX_W, TURN_GAIN,
     KICK_COOLDOWN, LOOP_RATE, FRAME_INTERVAL,
-    DEFENSE_DEPTH,
+    DEFENSE_DEPTH,POSSESS_DIST,
 )
 
 # -- Tuning ---------------------------------------------------------------
@@ -157,9 +157,6 @@ def run_striker(is_running, dispatch_q, wm, robot_id=0, is_yellow=True):
                 w = 0.0
             else:
                 w = clamp(ang_ball * TURN_GAIN, -MAX_W, MAX_W)
-
-        # -- Wall braking -----------------------------------------------
-        vx, vy = wall_brake(rpos[0], rpos[1], vx, vy)
 
         # -- Rotation compensation --------------------------------------
         vx, vy = rotation_compensate(vx, vy, w)

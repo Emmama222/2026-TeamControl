@@ -22,9 +22,15 @@ from TeamControl.ui.theme import (FIELD_GREEN, FIELD_LINE, YELLOW_TEAM,
                                    ROLE_GOALIE, ROLE_ATTACKER, ROLE_SUPPORT,
                                    ROLE_DEFENDER, TEXT)
 from TeamControl.robot.constants import (
-    FIELD_LENGTH, FIELD_WIDTH, HALF_LEN, HALF_WID,
-    PENALTY_DEPTH, PENALTY_WIDTH, CENTER_RADIUS,
-    GOAL_DEPTH, GOAL_WIDTH, ROBOT_RADIUS, FIELD_MARGIN as MARGIN,
+    FIELD_LENGTH as DEFAULT_FIELD_LENGTH,
+    FIELD_WIDTH as DEFAULT_FIELD_WIDTH,
+    PENALTY_DEPTH as DEFAULT_PENALTY_DEPTH,
+    PENALTY_WIDTH as DEFAULT_PENALTY_WIDTH,
+    CENTER_RADIUS as DEFAULT_CENTER_RADIUS,
+    GOAL_DEPTH as DEFAULT_GOAL_DEPTH,
+    GOAL_WIDTH as DEFAULT_GOAL_WIDTH,
+    ROBOT_RADIUS,
+    FIELD_MARGIN as DEFAULT_MARGIN,
 )
 
 
@@ -36,6 +42,7 @@ class FieldCanvas(QWidget):
     point_picked = Signal(float, float)           # x_mm, y_mm — for go-to-point
     action_requested = Signal(str)                # action name
     coordinate_hover = Signal(float, float)       # x_mm, y_mm
+    robot_selected = Signal(bool, int)            # is_yellow, robot_id — left-click on robot
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,6 +56,8 @@ class FieldCanvas(QWidget):
         self._targets: list[tuple] = []
         self._paths: list[list[tuple]] = []
         self._frame_number = 0
+        self._field_geometry = None
+
 
         # View transform
         self._scale = 1.0
@@ -62,11 +71,12 @@ class FieldCanvas(QWidget):
     # ── Public API ────────────────────────────────────────────────
 
     def set_frame(self, snap):
-        self._yellow = snap.yellow
-        self._blue = snap.blue
+        self._yellow = [r for r in snap.yellow if r is not None]
+        self._blue = [r for r in snap.blue if r is not None]
         self._ball = snap.ball
         self._frame_number = snap.frame_number
         self.update()
+
 
     def set_targets(self, targets):
         self._targets = list(targets)
@@ -74,6 +84,11 @@ class FieldCanvas(QWidget):
 
     def set_paths(self, paths):
         self._paths = list(paths)
+        self.update()
+
+    def set_field_geometry(self, field):
+        """Use the latest SSL-Vision geometry, falling back to local defaults."""
+        self._field_geometry = field
         self.update()
 
     def set_place_mode(self, mode):
@@ -87,8 +102,8 @@ class FieldCanvas(QWidget):
 
     def _view_transform(self) -> QTransform:
         w, h = self.width(), self.height()
-        total_w = FIELD_LENGTH + 2 * MARGIN + 2 * GOAL_DEPTH
-        total_h = FIELD_WIDTH + 2 * MARGIN
+        total_w = self._field_length() + 2 * self._margin() + 2 * self._goal_depth()
+        total_h = self._field_width() + 2 * self._margin()
         sx = w / total_w * self._scale
         sy = h / total_h * self._scale
         s = min(sx, sy)
@@ -121,6 +136,7 @@ class FieldCanvas(QWidget):
         self._draw_robots(p, self._yellow, QColor(YELLOW_TEAM))
         self._draw_robots(p, self._blue, QColor(BLUE_TEAM))
         self._draw_ball(p)
+        self._draw_overlays(p)
 
         # Frame counter overlay
         p.resetTransform()
@@ -130,10 +146,19 @@ class FieldCanvas(QWidget):
         p.end()
 
     def _draw_field(self, p: QPainter):
-        outer = QRectF(-(HALF_LEN + MARGIN + GOAL_DEPTH),
-                       -(HALF_WID + MARGIN),
-                       FIELD_LENGTH + 2 * MARGIN + 2 * GOAL_DEPTH,
-                       FIELD_WIDTH + 2 * MARGIN)
+        field_length = self._field_length()
+        field_width = self._field_width()
+        margin = self._margin()
+        goal_depth = self._goal_depth()
+        goal_width = self._goal_width()
+        penalty_depth = self._penalty_depth()
+        penalty_width = self._penalty_width()
+        half_len = field_length / 2
+        half_wid = field_width / 2
+        outer = QRectF(-(half_len + margin + goal_depth),
+                       -(half_wid + margin),
+                       field_length + 2 * margin + 2 * goal_depth,
+                       field_width + 2 * margin)
         p.fillRect(outer, QColor(FIELD_GREEN))
 
         pen = QPen(QColor(FIELD_LINE), 20)
@@ -141,13 +166,14 @@ class FieldCanvas(QWidget):
         p.setBrush(Qt.NoBrush)
 
         # Outer boundary
-        p.drawRect(QRectF(-HALF_LEN, -HALF_WID, FIELD_LENGTH, FIELD_WIDTH))
+        p.drawRect(QRectF(-half_len, -half_wid, field_length, field_width))
 
         # Center line
-        p.drawLine(QPointF(0, -HALF_WID), QPointF(0, HALF_WID))
+        p.drawLine(QPointF(0, -half_wid), QPointF(0, half_wid))
 
         # Center circle
-        p.drawEllipse(QPointF(0, 0), CENTER_RADIUS, CENTER_RADIUS)
+        center_radius = self._center_radius()
+        p.drawEllipse(QPointF(0, 0), center_radius, center_radius)
 
         # Center dot
         p.setBrush(QColor(FIELD_LINE))
@@ -155,31 +181,62 @@ class FieldCanvas(QWidget):
         p.setBrush(Qt.NoBrush)
 
         # Left penalty area
-        ph = PENALTY_WIDTH / 2
-        p.drawRect(QRectF(-HALF_LEN, -ph, PENALTY_DEPTH, PENALTY_WIDTH))
+        ph = penalty_width / 2
+        p.drawRect(QRectF(-half_len, -ph, penalty_depth, penalty_width))
 
         # Right penalty area
-        p.drawRect(QRectF(HALF_LEN - PENALTY_DEPTH, -ph,
-                          PENALTY_DEPTH, PENALTY_WIDTH))
+        p.drawRect(QRectF(half_len - penalty_depth, -ph,
+                          penalty_depth, penalty_width))
 
         # Left goal
-        gh = GOAL_WIDTH / 2
+        gh = goal_width / 2
         goal_pen = QPen(QColor("#cccccc"), 16)
         p.setPen(goal_pen)
-        p.drawRect(QRectF(-HALF_LEN - GOAL_DEPTH, -gh, GOAL_DEPTH, GOAL_WIDTH))
+        p.drawRect(QRectF(-half_len - goal_depth, -gh,
+                          goal_depth, goal_width))
 
         # Right goal
-        p.drawRect(QRectF(HALF_LEN, -gh, GOAL_DEPTH, GOAL_WIDTH))
+        p.drawRect(QRectF(half_len, -gh, goal_depth, goal_width))
+
+    def _field_value(self, name, default):
+        value = getattr(self._field_geometry, name, None)
+        return default if value is None or float(value) <= 0 else float(value)
+
+    def _field_length(self):
+        return self._field_value("field_length", DEFAULT_FIELD_LENGTH)
+
+    def _field_width(self):
+        return self._field_value("field_width", DEFAULT_FIELD_WIDTH)
+
+    def _margin(self):
+        return self._field_value("boundary_width", DEFAULT_MARGIN)
+
+    def _goal_depth(self):
+        return self._field_value("goal_depth", DEFAULT_GOAL_DEPTH)
+
+    def _goal_width(self):
+        return self._field_value("goal_width", DEFAULT_GOAL_WIDTH)
+
+    def _penalty_depth(self):
+        return self._field_value("penalty_area_depth", DEFAULT_PENALTY_DEPTH)
+
+    def _penalty_width(self):
+        return self._field_value("penalty_area_width", DEFAULT_PENALTY_WIDTH)
+
+    def _center_radius(self):
+        arcs = getattr(self._field_geometry, "field_arcs", ())
+        for arc in arcs:
+            if "center" in str(getattr(arc, "name", "")).lower():
+                return float(arc.radius)
+        return DEFAULT_CENTER_RADIUS
+
 
     def _draw_robots(self, p: QPainter, robots, color: QColor):
         if not robots:
             return
         for r in robots:
             cx, cy = r.x, r.y
-            # Body
-            p.setPen(QPen(QColor("#111111"), 12))
-            p.setBrush(QBrush(color))
-            p.drawEllipse(QPointF(cx, cy), ROBOT_RADIUS, ROBOT_RADIUS)
+            self._draw_robot_body(p, cx, cy, r.o, color)
 
             # Orientation arrow
             arr_len = ROBOT_RADIUS * 1.6
@@ -210,6 +267,26 @@ class FieldCanvas(QWidget):
             text_rect = QRectF(cx - 50, cy - 50, 100, 100)
             p.drawText(text_rect, Qt.AlignCenter, str(r.id))
 
+    def _draw_robot_body(self, p: QPainter, cx, cy, theta, color: QColor):
+        """Draw the SSL robot footprint: circular rear with a flat kicker front."""
+        front_x = ROBOT_RADIUS * 0.72
+        cut_angle = math.acos(front_x / ROBOT_RADIUS)
+        path = QPainterPath()
+        for index in range(25):
+            angle = cut_angle + (2 * math.pi - 2 * cut_angle) * index / 24
+            local_x = math.cos(angle) * ROBOT_RADIUS
+            local_y = math.sin(angle) * ROBOT_RADIUS
+            x = cx + math.cos(theta) * local_x - math.sin(theta) * local_y
+            y = cy + math.sin(theta) * local_x + math.cos(theta) * local_y
+            if index == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+        path.closeSubpath()
+        p.setPen(QPen(QColor("#111111"), 12))
+        p.setBrush(QBrush(color))
+        p.drawPath(path)
+
     def _draw_ball(self, p: QPainter):
         if not self._ball:
             return
@@ -217,6 +294,10 @@ class FieldCanvas(QWidget):
         p.setPen(QPen(QColor("#000000"), 8))
         p.setBrush(QBrush(QColor(BALL_COLOR)))
         p.drawEllipse(QPointF(bx, by), 45, 45)
+
+    def _draw_overlays(self, p: QPainter):
+        """Draw optional subclasses' field-space overlays."""
+        return
 
     def _draw_targets(self, p: QPainter):
         if not self._targets:
@@ -274,12 +355,31 @@ class FieldCanvas(QWidget):
             ev.accept()
             return
 
+        if ev.button() == Qt.LeftButton:
+            pt = self._widget_to_field(ev.position())
+            robot = self._find_robot_at(pt.x(), pt.y())
+            if robot is not None:
+                self.robot_selected.emit(robot.isYellow, robot.robot_id)
+                ev.accept()
+                return
+
         if ev.button() == Qt.RightButton:
             self._show_field_menu(ev)
             ev.accept()
             return
 
         super().mousePressEvent(ev)
+
+    def _find_robot_at(self, fx: float, fy: float):
+        """Return the first robot whose body contains field point (fx, fy), or None."""
+        hit_r = ROBOT_RADIUS * 2.0
+        for r in self._yellow:
+            if math.hypot(r.x - fx, r.y - fy) <= hit_r:
+                return r
+        for r in self._blue:
+            if math.hypot(r.x - fx, r.y - fy) <= hit_r:
+                return r
+        return None
 
     def _show_field_menu(self, ev: QMouseEvent):
         pt = self._widget_to_field(ev.position())

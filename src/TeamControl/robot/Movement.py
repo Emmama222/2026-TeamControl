@@ -1,3 +1,13 @@
+# HISTORICAL MODULE — used by the behaviour tree, voronoi planner, and sandbox.
+# Active game behaviour (striker, goalie, navigator, team) uses ball_nav.move_toward() instead.
+#
+# Known issues in this file:
+#   - PDController class below is a duplicate of TeamControl.robot.motion.pd.PDController.
+#     Prefer the canonical version for any new code.
+#   - calculateBallVelocity() speed levels (0.02–0.10) are 10x too low; actual m/s values
+#     should be in the 0.2–1.0 range.  Do not rely on it for real robot speeds.
+#   - For new precise go-to-point behaviour use motion/controller.py (RobotMotionController)
+#     which includes per-robot hardware compensation and deadline-based speed scaling.
 import math
 import time
 from typing import Tuple, Optional

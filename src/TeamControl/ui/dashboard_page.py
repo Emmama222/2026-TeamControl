@@ -1,41 +1,28 @@
 """
-Dashboard page — the main operational view.
+Dashboard page — field canvas on the left, tabbed sidebar on the right.
 
-Layout:
-  ┌────────────────────────────────────┬──────────────────┐
-  │                                    │  Robots table    │
-  │           Field Canvas             │  Game state      │
-  │           (fills space)            │  Network info    │
-  │                                    │                  │
-  └────────────────────────────────────┴──────────────────┘
+Right panel:
+  Monitor   — runtime channels, robot table, game state
 """
 
-import json
 import math
-import os
 import time
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QGridLayout, QProgressBar, QFrame, QScrollArea,
-    QDoubleSpinBox, QPushButton,
+    QGridLayout, QFrame, QScrollArea,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 
 from TeamControl.ui.theme import (
-    ACCENT, TEXT_DIM, SUCCESS, WARNING, DANGER,
-    YELLOW_TEAM, BLUE_TEAM, BALL_COLOR, BORDER, BG_CARD,
+    ACCENT, TEXT_DIM, SUCCESS, WARNING, DANGER, TEXT,
+    YELLOW_TEAM, BLUE_TEAM, BALL_COLOR,
 )
-
-_CAL_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), os.pardir, os.pardir, os.pardir,
-    "calibration.json"))
 
 
 def _card(title_text):
-    """Create a styled card frame with a title."""
     card = QFrame()
     card.setObjectName("card")
     lay = QVBoxLayout(card)
@@ -54,24 +41,13 @@ def _val_label(text="—", size=12, bold=True):
     return lbl
 
 
-class _StatusDot(QLabel):
-    def __init__(self):
-        super().__init__("●")
-        self.setFixedWidth(18)
-        self.setAlignment(Qt.AlignCenter)
-        self.set_ok(False)
-
-    def set_ok(self, ok):
-        c = SUCCESS if ok else DANGER
-        self.setStyleSheet(f"color:{c}; font-size:14px;")
-
-
 class DashboardPage(QWidget):
-    """Field + sidebar with robots, game state, and network."""
+    """Field canvas + tabbed right sidebar."""
 
     coordinate_hover = Signal(float, float)
 
-    def __init__(self, field_canvas, parent=None, engine=None, test_panel=None):
+    def __init__(self, field_canvas, parent=None, engine=None,
+                 test_panel=None):
         super().__init__(parent)
         self._field = field_canvas
         self._engine = engine
@@ -81,57 +57,128 @@ class DashboardPage(QWidget):
         root.setSpacing(0)
 
         splitter = QSplitter(Qt.Horizontal)
-
-        # ── Left: Field canvas (stretches) ────────────────────────
         splitter.addWidget(self._field)
 
-        # ── Right: scrollable sidebar ─────────────────────────────
-        sidebar = QWidget()
-        sidebar.setMinimumWidth(320)
-        sidebar.setMaximumWidth(480)
-        sb_outer = QVBoxLayout(sidebar)
-        sb_outer.setContentsMargins(0, 0, 0, 0)
-        sb_outer.setSpacing(0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; }")
-        scroll_inner = QWidget()
-        sb_lay = QVBoxLayout(scroll_inner)
-        sb_lay.setContentsMargins(8, 8, 8, 8)
-        sb_lay.setSpacing(8)
-
-        # --- Robot table card ---
-        self._build_robot_card(sb_lay)
-
-        # --- Game state card ---
-        self._build_game_card(sb_lay)
-
-        # --- Network card ---
-        self._build_network_card(sb_lay)
-
-        # --- Calibration card (hidden until a non-vision mode starts) ---
-        self._build_cal_card(sb_lay)
-
-        sb_lay.addStretch()
-        scroll.setWidget(scroll_inner)
-        sb_outer.addWidget(scroll)
-        splitter.addWidget(sidebar)
-
+        # ── Right sidebar: read-only runtime monitor ──────────────
+        monitor = self._build_monitor_panel()
+        monitor.setMinimumWidth(320)
+        monitor.setMaximumWidth(520)
+        splitter.addWidget(monitor)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([1100, 360])
+        splitter.setSizes([1100, 420])
 
         root.addWidget(splitter)
 
         self._field.coordinate_hover.connect(self.coordinate_hover.emit)
 
-        # FPS tracking
         self._frame_times: list[float] = []
-        self._last_frame_time = 0.0
         self._current_mode = "vision_only"
 
-    # ── Robot table ───────────────────────────────────────────────
+    # ── Monitor tab ───────────────────────────────────────────────
+
+    def _build_monitor_panel(self):
+        panel = QWidget()
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        inner = QWidget()
+        inner_lay = QVBoxLayout(inner)
+        inner_lay.setContentsMargins(8, 8, 8, 8)
+        inner_lay.setSpacing(8)
+
+        self._build_channels_card(inner_lay)
+        self._build_robot_card(inner_lay)
+        self._build_game_card(inner_lay)
+        inner_lay.addStretch()
+
+        scroll.setWidget(inner)
+        lay.addWidget(scroll)
+        return panel
+
+    # ── Runtime channels card ─────────────────────────────────────
+
+    _CHANNEL_NAMES = {
+        "vision":     "Vision",
+        "gc":         "Game Controller",
+        "robot_recv": "Robot Recv",
+        "use_grsim":  "Use grSim",
+        "send_grsim": "Send → grSim",
+        "record_wm":  "Record WM",
+    }
+
+    def _build_channels_card(self, parent_lay):
+        card, lay = _card("Runtime Channels")
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        grid.setColumnStretch(1, 1)
+
+        self._channel_dots = {}
+        self._channel_name_lbls = {}
+        self._channel_latency = {}
+
+        for row, (key, name) in enumerate(self._CHANNEL_NAMES.items()):
+            dot = QLabel("●")
+            dot.setFixedWidth(18)
+            dot.setAlignment(Qt.AlignCenter)
+            dot.setStyleSheet(f"color:{TEXT_DIM}; font-size:14px;")
+            self._channel_dots[key] = dot
+
+            name_lbl = QLabel(name)
+            name_lbl.setStyleSheet(f"color:{TEXT_DIM};")
+            self._channel_name_lbls[key] = name_lbl
+
+            lat = QLabel("—")
+            lat.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            lat.setMinimumWidth(52)
+            lat.setStyleSheet(f"color:{TEXT_DIM};")
+            self._channel_latency[key] = lat
+
+            grid.addWidget(dot,      row, 0)
+            grid.addWidget(name_lbl, row, 1)
+            grid.addWidget(lat,      row, 2)
+            if key == "vision":
+                self._fps_lbl = QLabel("0 fps")
+                self._fps_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self._fps_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+                self._fps_lbl.setStyleSheet(f"color:{TEXT_DIM};")
+                grid.addWidget(self._fps_lbl, row, 3)
+
+        lay.addLayout(grid)
+        parent_lay.addWidget(card)
+
+    def update_channel_status(self, status):
+        for key in self._CHANNEL_NAMES:
+            item = status.get(key, {})
+            enabled    = bool(item.get("enabled", False))
+            latency_ms = item.get("latency_ms")
+            stale      = bool(item.get("stale", True))
+
+            dot      = self._channel_dots[key]
+            name_lbl = self._channel_name_lbls[key]
+            lat      = self._channel_latency[key]
+
+            if not enabled:
+                dot.setStyleSheet(f"color:{TEXT_DIM}; font-size:14px;")
+                name_lbl.setStyleSheet(f"color:{TEXT_DIM};")
+                lat.setText("OFF")
+                lat.setStyleSheet(f"color:{TEXT_DIM};")
+            elif stale or latency_ms is None:
+                dot.setStyleSheet(f"color:{DANGER}; font-size:14px;")
+                name_lbl.setStyleSheet(f"color:{TEXT_DIM};")
+                lat.setText(">99ms")
+                lat.setStyleSheet(f"color:{DANGER}; font-weight:bold;")
+            else:
+                dot.setStyleSheet(f"color:{SUCCESS}; font-size:14px;")
+                name_lbl.setStyleSheet(f"color:{TEXT};")
+                lat.setText(f"{latency_ms}ms")
+                lat.setStyleSheet(f"color:{SUCCESS}; font-weight:bold;")
+
+    # ── Robot table card ──────────────────────────────────────────
 
     def _build_robot_card(self, parent_lay):
         card, lay = _card("Robots")
@@ -147,18 +194,19 @@ class DashboardPage(QWidget):
         self._robot_table.setAlternatingRowColors(True)
         self._robot_table.verticalHeader().setVisible(False)
         self._robot_table.setShowGrid(False)
-        self._robot_table.setMaximumHeight(260)
+        self._robot_table.setMinimumHeight(200)
+        self._robot_table.setMaximumHeight(360)
         hh = self._robot_table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.Stretch)
         hh.setMinimumSectionSize(40)
+        self._robot_table.verticalHeader().setDefaultSectionSize(32)
         lay.addWidget(self._robot_table)
         parent_lay.addWidget(card)
 
-    # ── Game state ────────────────────────────────────────────────
+    # ── Game state card ───────────────────────────────────────────
 
     def _build_game_card(self, parent_lay):
         card, lay = _card("Game State")
-
         grid = QGridLayout()
         grid.setSpacing(6)
 
@@ -170,7 +218,6 @@ class DashboardPage(QWidget):
         self._gs_mode = _val_label("—")
         grid.addWidget(self._gs_mode, 1, 1)
 
-        # Score
         grid.addWidget(QLabel("Score:"), 2, 0)
         score_row = QHBoxLayout()
         self._score_y = QLabel("0")
@@ -187,152 +234,35 @@ class DashboardPage(QWidget):
         score_row.addStretch()
         grid.addLayout(score_row, 2, 1)
 
+        grid.addWidget(QLabel("Command:"), 3, 0)
+        self._gs_command = _val_label("NO DATA")
+        grid.addWidget(self._gs_command, 3, 1)
+
+        grid.addWidget(QLabel("Stage:"), 4, 0)
+        self._gs_stage = _val_label("NO DATA")
+        grid.addWidget(self._gs_stage, 4, 1)
+
+        grid.addWidget(QLabel("Us Yellow:"), 5, 0)
+        self._gs_us_yellow = _val_label("NO DATA")
+        grid.addWidget(self._gs_us_yellow, 5, 1)
+
+        grid.addWidget(QLabel("Cards:"), 6, 0)
+        self._gs_cards = _val_label("NO DATA")
+        grid.addWidget(self._gs_cards, 6, 1)
+
+        grid.addWidget(QLabel("Fouls:"), 7, 0)
+        self._gs_fouls = _val_label("NO DATA")
+        grid.addWidget(self._gs_fouls, 7, 1)
+
+        grid.addWidget(QLabel("YC Timers:"), 8, 0)
+        self._gs_yellow_card_times = _val_label("NO DATA", size=10)
+        self._gs_yellow_card_times.setWordWrap(True)
+        grid.addWidget(self._gs_yellow_card_times, 8, 1)
+
         lay.addLayout(grid)
         parent_lay.addWidget(card)
 
-    # ── Network ───────────────────────────────────────────────────
-
-    def _build_network_card(self, parent_lay):
-        card, lay = _card("Network")
-
-        grid = QGridLayout()
-        grid.setSpacing(5)
-
-        self._vis_dot = _StatusDot()
-        self._gc_dot = _StatusDot()
-        self._grsim_dot = _StatusDot()
-
-        for i, (name, dot) in enumerate([
-            ("Vision", self._vis_dot),
-            ("Game Controller", self._gc_dot),
-            ("grSim", self._grsim_dot),
-        ]):
-            grid.addWidget(dot, i, 0)
-            grid.addWidget(QLabel(name), i, 1)
-
-        lay.addLayout(grid)
-
-        fps_row = QHBoxLayout()
-        fps_row.setSpacing(8)
-        self._fps_lbl = QLabel("0 fps")
-        self._fps_lbl.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self._fps_bar = QProgressBar()
-        self._fps_bar.setRange(0, 60)
-        self._fps_bar.setValue(0)
-        self._fps_bar.setTextVisible(False)
-        self._fps_bar.setFixedHeight(8)
-        fps_row.addWidget(self._fps_lbl)
-        fps_row.addWidget(self._fps_bar, 1)
-        lay.addLayout(fps_row)
-
-        parent_lay.addWidget(card)
-
-    # ── Calibration card ─────────────────────────────────────────
-
-    def _build_cal_card(self, parent_lay):
-        self._cal_card, lay = _card("Calibration")
-        self._cal_card.setVisible(False)
-
-        grid = QGridLayout()
-        grid.setSpacing(6)
-
-        grid.addWidget(QLabel("Speed scale:"), 0, 0)
-        self._cal_speed = QDoubleSpinBox()
-        self._cal_speed.setRange(0.01, 5.0)
-        self._cal_speed.setDecimals(4)
-        self._cal_speed.setSingleStep(0.01)
-        self._cal_speed.setFixedWidth(100)
-        grid.addWidget(self._cal_speed, 0, 1)
-        grid.addWidget(QLabel("actual / cmd"), 0, 2)
-
-        grid.addWidget(QLabel("Lateral drift/m:"), 1, 0)
-        self._cal_drift = QDoubleSpinBox()
-        self._cal_drift.setRange(-50.0, 50.0)
-        self._cal_drift.setDecimals(2)
-        self._cal_drift.setSingleStep(0.5)
-        self._cal_drift.setSuffix(" mm/m")
-        self._cal_drift.setFixedWidth(120)
-        grid.addWidget(self._cal_drift, 1, 1)
-
-        grid.addWidget(QLabel("Stop overshoot:"), 2, 0)
-        self._cal_stop = QDoubleSpinBox()
-        self._cal_stop.setRange(-200.0, 200.0)
-        self._cal_stop.setDecimals(1)
-        self._cal_stop.setSingleStep(5.0)
-        self._cal_stop.setSuffix(" mm")
-        self._cal_stop.setFixedWidth(120)
-        grid.addWidget(self._cal_stop, 2, 1)
-
-        lay.addLayout(grid)
-
-        btn_row = QHBoxLayout()
-        apply_btn = QPushButton("Apply && Save")
-        apply_btn.setStyleSheet(
-            f"background:{SUCCESS}; color:white; padding:5px 12px; "
-            f"border-radius:4px; font-weight:bold;")
-        apply_btn.clicked.connect(self._apply_cal)
-        btn_row.addWidget(apply_btn)
-
-        reset_btn = QPushButton("Reset")
-        reset_btn.setStyleSheet(
-            f"background:{BG_CARD}; color:{WARNING}; padding:5px 12px; "
-            f"border:1px solid {BORDER}; border-radius:4px;")
-        reset_btn.clicked.connect(self._reset_cal)
-        btn_row.addWidget(reset_btn)
-        lay.addLayout(btn_row)
-
-        self._cal_status = QLabel("")
-        self._cal_status.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
-        lay.addWidget(self._cal_status)
-
-        parent_lay.addWidget(self._cal_card)
-        self._load_cal_values()
-
-    def _load_cal_values(self):
-        try:
-            with open(_CAL_PATH, "r") as f:
-                data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError, ValueError):
-            data = {}
-        self._cal_speed.setValue(float(data.get("speed_scale", 1.0)))
-        self._cal_drift.setValue(float(data.get("lateral_drift_per_m", 0.0)))
-        self._cal_stop.setValue(float(data.get("stop_overshoot_mm", 0.0)))
-
-    def _apply_cal(self):
-        try:
-            with open(_CAL_PATH, "r") as f:
-                data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError, ValueError):
-            data = {}
-        data["speed_scale"] = round(self._cal_speed.value(), 4)
-        data["lateral_drift_per_m"] = round(self._cal_drift.value(), 2)
-        data["stop_overshoot_mm"] = round(self._cal_stop.value(), 1)
-        try:
-            with open(_CAL_PATH, "w") as f:
-                json.dump(data, f, indent=2)
-        except Exception as e:
-            self._cal_status.setStyleSheet(f"color:{DANGER}; font-size:11px;")
-            self._cal_status.setText(f"Save failed: {e}")
-            return
-        try:
-            from TeamControl.robot import ball_nav
-            ball_nav._reload_calibration()
-        except Exception:
-            pass
-        self._cal_status.setStyleSheet(f"color:{SUCCESS}; font-size:11px;")
-        self._cal_status.setText(
-            f"Saved — scale={data['speed_scale']:.4f}  "
-            f"drift={data['lateral_drift_per_m']:.2f}")
-
-    def _reset_cal(self):
-        self._cal_speed.setValue(1.0)
-        self._cal_drift.setValue(0.0)
-        self._cal_stop.setValue(0.0)
-        self._apply_cal()
-        self._cal_status.setStyleSheet(f"color:{WARNING}; font-size:11px;")
-        self._cal_status.setText("Reset to defaults")
-
-    # ── Public update API ─────────────────────────────────────────
+    # ── Public update methods ─────────────────────────────────────
 
     def update_frame(self, snap):
         self._field.set_frame(snap)
@@ -340,50 +270,95 @@ class DashboardPage(QWidget):
         self._update_fps()
 
     def update_game_state(self, state):
-        if state is None:
+        gc_status = state if isinstance(state, dict) else {"state": state}
+        game_state = gc_status.get("state")
+        if game_state is None:
             self._gs_state.setText("NO DATA")
             self._gs_state.setStyleSheet(f"color:{TEXT_DIM};")
+        else:
+            name = game_state.name if hasattr(game_state, "name") else str(game_state)
+            color_map = {"HALTED": DANGER, "STOPPED": WARNING, "RUNNING": SUCCESS}
+            c = color_map.get(name, ACCENT)
+            self._gs_state.setText(name)
+            self._gs_state.setStyleSheet(f"color:{c}; font-weight:bold;")
+
+        self._set_gc_value(self._gs_command, gc_status.get("command"))
+        self._set_gc_value(self._gs_stage, gc_status.get("stage"))
+
+        us_yellow = gc_status.get("us_yellow")
+        if us_yellow is None:
+            self._gs_us_yellow.setText("NO DATA")
+            self._gs_us_yellow.setStyleSheet(f"color:{TEXT_DIM};")
+        else:
+            self._gs_us_yellow.setText("YES" if us_yellow else "NO")
+            color = YELLOW_TEAM if us_yellow else BLUE_TEAM
+            self._gs_us_yellow.setStyleSheet(f"color:{color}; font-weight:bold;")
+
+        self._update_gc_discipline(gc_status)
+
+    def _set_gc_value(self, label, value):
+        if value is None:
+            label.setText("NO DATA")
+            label.setStyleSheet(f"color:{TEXT_DIM};")
             return
-        name = state.name if hasattr(state, "name") else str(state)
-        color_map = {"HALTED": DANGER, "STOPPED": WARNING, "RUNNING": SUCCESS}
-        c = color_map.get(name, ACCENT)
-        self._gs_state.setText(name)
-        self._gs_state.setStyleSheet(f"color:{c}; font-weight:bold;")
+        label.setText(value.name if hasattr(value, "name") else str(value))
+        label.setStyleSheet(f"color:{TEXT}; font-weight:bold;")
+
+    def _update_gc_discipline(self, gc_status):
+        yellow_cards = gc_status.get("yellow_cards")
+        red_cards = gc_status.get("red_cards")
+        fouls = gc_status.get("fouls")
+        timers = gc_status.get("yellow_card_times") or []
+
+        if yellow_cards is None and red_cards is None:
+            self._gs_cards.setText("NO DATA")
+            self._gs_cards.setStyleSheet(f"color:{TEXT_DIM};")
+        else:
+            yellow_text = "?" if yellow_cards is None else str(yellow_cards)
+            red_text = "?" if red_cards is None else str(red_cards)
+            self._gs_cards.setText(f"Y {yellow_text} / R {red_text}")
+            color = DANGER if red_cards else WARNING if yellow_cards else SUCCESS
+            self._gs_cards.setStyleSheet(f"color:{color}; font-weight:bold;")
+
+        if fouls is None:
+            self._gs_fouls.setText("NO DATA")
+            self._gs_fouls.setStyleSheet(f"color:{TEXT_DIM};")
+        else:
+            self._gs_fouls.setText(str(fouls))
+            self._gs_fouls.setStyleSheet(f"color:{WARNING if fouls else SUCCESS}; font-weight:bold;")
+
+        if not timers:
+            self._gs_yellow_card_times.setText("NONE")
+            self._gs_yellow_card_times.setStyleSheet(f"color:{TEXT_DIM};")
+        else:
+            self._gs_yellow_card_times.setText(", ".join(self._format_gc_time(t) for t in timers))
+            self._gs_yellow_card_times.setStyleSheet(f"color:{WARNING}; font-weight:bold;")
+
+    def _format_gc_time(self, value):
+        try:
+            seconds = max(0, int(value) // 1_000_000)
+        except (TypeError, ValueError):
+            return str(value)
+        return f"{seconds // 60}:{seconds % 60:02d}"
 
     def set_mode(self, mode):
         self._current_mode = mode
         self._gs_mode.setText(mode.upper())
-        show_cal = mode != "vision_only"
-        self._cal_card.setVisible(show_cal)
-        if show_cal:
-            self._load_cal_values()
-        # Show / hide coop overlay using existing targets + paths
         if mode == "coop":
-            from TeamControl.robot.coop import (
-                HOME_YELLOW, HOME_BLUE, BALL_START,
-            )
+            from TeamControl.robot.coop import HOME_YELLOW, HOME_BLUE, BALL_START
             self._field.set_targets([
                 (*HOME_YELLOW, YELLOW_TEAM),
                 (*HOME_BLUE, BLUE_TEAM),
                 (*BALL_START, BALL_COLOR),
             ])
-            self._field.set_paths([
-                ([HOME_YELLOW, HOME_BLUE], ACCENT),
-            ])
+            self._field.set_paths([([HOME_YELLOW, HOME_BLUE], ACCENT)])
         else:
             self._field.set_targets([])
             self._field.set_paths([])
 
     def set_engine_running(self, running):
-        self._vis_dot.set_ok(running)
-        self._gc_dot.set_ok(running)
-        self._grsim_dot.set_ok(running)
         if not running:
             self._fps_lbl.setText("0 fps")
-            self._fps_bar.setValue(0)
-            # Keep cal card visible if a non-vision mode is selected
-            show_cal = getattr(self, "_current_mode", "vision_only") != "vision_only"
-            self._cal_card.setVisible(show_cal)
 
     def get_fps(self):
         return len(self._frame_times)
@@ -391,9 +366,12 @@ class DashboardPage(QWidget):
     # ── Internal ──────────────────────────────────────────────────
 
     def _update_robot_table(self, snap):
-        robots = [(YELLOW_TEAM, "Y", r) for r in snap.yellow] + \
-                 [(BLUE_TEAM, "B", r) for r in snap.blue]
+        yellow = [r for r in snap.yellow if r is not None]
+        blue   = [r for r in snap.blue   if r is not None]
+        robots = [(YELLOW_TEAM, "Y", r) for r in yellow] + \
+                 [(BLUE_TEAM,   "B", r) for r in blue]
 
+        self._robot_table.blockSignals(True)
         self._robot_table.setRowCount(len(robots))
         for row, (color_hex, team_short, r) in enumerate(robots):
             vals = [team_short, str(r.id), f"{r.x:.0f}",
@@ -406,9 +384,11 @@ class DashboardPage(QWidget):
                     item.setForeground(QColor(color_hex))
                     item.setFont(QFont("Segoe UI", 10, QFont.Bold))
                 self._robot_table.setItem(row, col, item)
+        self._robot_table.blockSignals(False)
 
-        ny, nb = len(snap.yellow), len(snap.blue)
-        ball = f"Ball ({snap.ball.x:.0f}, {snap.ball.y:.0f})" if snap.ball else "No ball"
+        ny, nb = len(yellow), len(blue)
+        ball = (f"Ball ({snap.ball.x:.0f}, {snap.ball.y:.0f})"
+                if snap.ball else "No ball")
         self._robot_summary.setText(
             f"Y:{ny}  B:{nb}  |  {ball}  |  Frame #{snap.frame_number}")
 
@@ -416,7 +396,4 @@ class DashboardPage(QWidget):
         now = time.time()
         self._frame_times.append(now)
         self._frame_times = [t for t in self._frame_times if t > now - 1.0]
-        fps = len(self._frame_times)
-        self._fps_lbl.setText(f"{fps} fps")
-        self._fps_bar.setValue(min(fps, 60))
-        self._vis_dot.set_ok(fps > 0)
+        self._fps_lbl.setText(f"{len(self._frame_times)} fps")

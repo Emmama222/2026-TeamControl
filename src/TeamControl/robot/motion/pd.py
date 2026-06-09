@@ -2,6 +2,9 @@ import math
 import time
 from typing import Optional
 
+# Canonical PDController — Motion/controller.py and pd_calibration.py use this.
+# Movement.py contains an identical copy kept for historical reasons; prefer this one.
+
 
 class PDController:
     """

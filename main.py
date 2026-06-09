@@ -3,7 +3,7 @@
 import argparse
 import sys
 import time
-from multiprocessing import Process, Queue, Event
+from multiprocessing import Process, Queue, Event, freeze_support
 
 from TeamControl.process_workers.vision_runner import VisionProcess
 from TeamControl.process_workers.gcfsm_runner import GCfsm
@@ -19,20 +19,31 @@ from TeamControl.onboard_vision import build_ip_map
 from TeamControl.robot.goalie import run_goalie
 from TeamControl.robot.striker import run_striker
 from TeamControl.robot.navigator import run_navigator, WAYPOINTS_A, WAYPOINTS_B
+from TeamControl.robot.voronoi_navigator import run_voronoi_navigator
 from TeamControl.robot.team import run_team
 from TeamControl.robot.coop import run_coop
 
 
 def main():
+    freeze_support()
     parser = argparse.ArgumentParser(
         description="RoboCup SSL Team Control — multi-mode launcher",
     )
     parser.add_argument(
         "--mode",
-        choices=["calibration", "goalie", "1v1", "obstacle", "coop", "6v6"],
+        choices=[
+            "calibration",
+            "voronoi_test",
+            "goalie",
+            "1v1",
+            "obstacle",
+            "coop",
+            "6v6",
+        ],
         default="calibration",
         help=(
             "calibration - backend only; calibration runner drives robot (default)\n"
+            "voronoi_test — one yellow + one blue robot use Voronoi planning\n"
             "goalie   — yellow goalie vs blue striker\n"
             "1v1      — yellow striker vs blue striker\n"
             "obstacle — two robots chasing ball with obstacle avoidance\n"
@@ -74,7 +85,7 @@ def main():
         Process(target=Dispatcher.run_worker,
                 args=(is_running, logger, dispatch_q, preset)),
         Process(target=RobotRecv.run_worker,
-                args=(is_running, logger, recv_q)),
+                args=(is_running, logger, preset.robot_ip,recv_q)),
     ]
 
     # ── Mode-specific foreground processes ────────────────────
@@ -84,6 +95,17 @@ def main():
         # Calibration mode intentionally starts no foreground robot behaviours.
         # The PD calibration GUI/runner sends commands directly through dispatch_q.
         pass
+
+    elif args.mode == "voronoi_test":
+        # One shell from each team chases the ball through the live Voronoi map.
+        foreground.append(
+            Process(target=run_voronoi_navigator,
+                    args=(is_running, dispatch_q, wm,
+                          0, preset.us_yellow)))
+        foreground.append(
+            Process(target=run_voronoi_navigator,
+                    args=(is_running, dispatch_q, wm,
+                          0, not preset.us_yellow)))
 
     elif args.mode == "goalie":
         # Yellow goalie (robot 4) defends against blue striker (robot 0)

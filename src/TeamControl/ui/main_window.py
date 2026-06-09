@@ -32,6 +32,7 @@ from TeamControl.ui.dispatcher_panel import DispatcherPanel
 from TeamControl.ui.engine import SimEngine
 from TeamControl.ui.field_canvas import FieldCanvas
 from TeamControl.ui.log_panel import LogPanel
+from TeamControl.ui.map_canvas import MapDebugWidget
 from TeamControl.ui.onboard_possession_panel import OnboardPossessionPanel
 from TeamControl.ui.pd_calibration_page import PDCalibrationPage
 from TeamControl.ui.settings_page import SettingsPage
@@ -58,29 +59,36 @@ class MainWindow(QMainWindow):
         # ── Pages ─────────────────────────────────────────────────
         self._test_panel = TestPanel(engine=self._engine, field=self._field)
         self._dispatch_panel = DispatcherPanel(engine=self._engine)
-        self._calibration = CalibrationPage(
-            engine=self._engine, test_panel=self._test_panel
-        )
         self._pd_calibration = PDCalibrationPage(engine=self._engine)
+        self._calibration = CalibrationPage(
+            engine=self._engine,
+            test_panel=self._test_panel,
+            pd_panel=self._pd_calibration,
+        )
         self._dashboard = DashboardPage(
-            self._field, engine=self._engine, test_panel=self._test_panel
+            self._field, engine=self._engine, test_panel=self._test_panel,
         )
         self._settings = SettingsPage()
+        self._settings.set_channel_defaults(self._engine.reload_config())
         self._log_panel = LogPanel()
+        self._map_debug = MapDebugWidget()
         self._onboard_panel = OnboardPossessionPanel(engine=self._engine)
 
         # ── Central tabs ──────────────────────────────────────────
         self._tabs = QTabWidget()
         self._tabs.setObjectName("mainTabs")
         self._tabs.setDocumentMode(True)
-        self._tabs.addTab(self._dashboard, "  Dashboard  ")
+
+        # Dashboard is the top-level Home tab; Calibration has its own main tab.
+        self._tabs.addTab(self._dashboard, "  Home  ")
+        self._tabs.addTab(self._map_debug, "  World Map  ")
+        self._tabs.addTab(self._calibration, "  Calibration  ")
         self._tabs.addTab(self._settings, "  Settings  ")
         self._tabs.addTab(self._log_panel, "  Console  ")
         self._tabs.addTab(self._test_panel, "  Hardware Test  ")
         self._tabs.addTab(self._dispatch_panel, "  Dispatcher  ")
-        self._tabs.addTab(self._calibration, "  Calibration  ")
         self._tabs.addTab(self._onboard_panel, "  Onboard Possession  ")
-        self._tabs.addTab(self._pd_calibration, "  PD Calibration  ")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self._tabs)
 
         # ── Toolbar ──────────────────────────────────────────────
@@ -218,10 +226,10 @@ class MainWindow(QMainWindow):
         view_menu = mb.addMenu("View")
         view_menu.addAction("Reset Field View", self._reset_field_view)
         view_menu.addSeparator()
-        for i, name in enumerate(["PD Calibration"]):
-            view_menu.addAction(
-                name, lambda checked=False, idx=i: self._tabs.setCurrentIndex(idx)
-            )
+        view_menu.addAction(
+            "Calibration",
+            lambda checked=False: self._tabs.setCurrentWidget(self._calibration),
+        )
 
         sim_menu = mb.addMenu("Simulation")
         sim_menu.addAction("Center Ball", lambda: self._engine.place_ball(0, 0))
@@ -255,8 +263,13 @@ class MainWindow(QMainWindow):
         eng = self._engine
 
         eng.frame_ready.connect(self._on_frame)
+        eng.map_render_ready.connect(self._map_debug.set_render_data)
+        eng.field_geometry_ready.connect(self._field.set_field_geometry)
+        eng.field_geometry_ready.connect(self._map_debug.set_field_geometry)
+        eng.field_geometry_ready.connect(self._calibration.set_field_geometry)
         eng.game_state_ready.connect(self._dashboard.update_game_state)
         eng.dispatch_info.connect(self._dispatch_panel.update_info)
+        eng.channel_status_ready.connect(self._dashboard.update_channel_status)
         eng.engine_started.connect(self._on_engine_started)
         eng.engine_stopped.connect(self._on_engine_stopped)
         eng.log_message.connect(self._log_panel.append)
@@ -281,12 +294,18 @@ class MainWindow(QMainWindow):
         )
         self._field.point_picked.connect(self._test_panel.go_to_point)
         self._field.action_requested.connect(self._test_panel.field_action)
+        self._field.robot_selected.connect(self._test_panel.select_robot)
 
         self._settings.config_panel.config_changed.connect(
             lambda: self._log_panel.append("[config] Configuration saved")
         )
 
     # ── Handlers ─────────────────────────────────────────────────
+
+    def _on_tab_changed(self, index):
+        self._engine.set_map_render_enabled(
+            self._tabs.widget(index) is self._map_debug
+        )
 
     def _on_mode_combo_changed(self, mode):
         self._dashboard.set_mode(mode)
@@ -299,7 +318,12 @@ class MainWindow(QMainWindow):
             f"[engine] Starting {mode} — our bot #{our_id}, opp bot #{opp_id}"
         )
         try:
-            self._engine.start(mode, our_id=our_id, opp_id=opp_id)
+            self._engine.start(
+                mode,
+                our_id=our_id,
+                opp_id=opp_id,
+                channel_options=self._settings.channel_options(),
+            )
         except Exception as e:
             self._log_panel.append(f"[error] Failed to start: {e}")
 
@@ -313,16 +337,10 @@ class MainWindow(QMainWindow):
         if self._engine.is_running:
             self._engine.stop()
         self._engine.start(
-            mode, our_id=self._our_id_spin.value(), opp_id=self._opp_id_spin.value()
-        )
-
-    def _switch_mode(self, mode):
-        idx = SimEngine.MODES.index(mode)
-        self._mode_combo.setCurrentIndex(idx)
-        if self._engine.is_running:
-            self._engine.stop()
-        self._engine.start(
-            mode, our_id=self._our_id_spin.value(), opp_id=self._opp_id_spin.value()
+            mode,
+            our_id=self._our_id_spin.value(),
+            opp_id=self._opp_id_spin.value(),
+            channel_options=self._settings.channel_options(),
         )
 
     def _on_engine_started(self, mode):
@@ -336,6 +354,7 @@ class MainWindow(QMainWindow):
         self._status_mode.setText(f"Mode: {mode}")
         self._dashboard.set_mode(mode)
         self._dashboard.set_engine_running(True)
+        self._settings.set_engine_running(True)
         self._dispatch_panel.set_running(True)
 
     def _on_engine_stopped(self):
@@ -348,6 +367,7 @@ class MainWindow(QMainWindow):
         self._state_label.setStyleSheet(f"color:{TEXT_DIM};")
         self._status_mode.setText("Mode: —")
         self._dashboard.set_engine_running(False)
+        self._settings.set_engine_running(False)
         self._dispatch_panel.set_running(False)
 
     def _on_frame(self, snap):

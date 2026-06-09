@@ -16,8 +16,10 @@ _TUNING_PATH = os.path.normpath(_TUNING_PATH)
 
 def _load_tuning():
     defaults = {
+        "max_speed": 5.0,
         "max_w_raw": 0.5,
         "w_clamp_pct": 0.60,
+        "manual_max_w": 10.0,
         "turn_gain": 0.8,
         "face_ball_gain": 0.8,
         "path_planner_gain": 0.8,
@@ -44,7 +46,7 @@ def _load_tuning():
 _t = _load_tuning()
 
 # ═════════════════════════════════════════════════════════════════
-#  FIELD GEOMETRY (mm) — SSL small field 5000 × 3000
+#  FIELD GEOMETRY (mm) — SSL Division B field 9000 × 6000
 # ═════════════════════════════════════════════════════════════════
 
 FIELD_LENGTH      = 4500
@@ -70,7 +72,9 @@ DEFENSE_HALF_WIDTH = 1200
 
 ROBOT_RADIUS      = 90       # mm
 
-MAX_SPEED         = 1.0      # m/s — absolute hardware speed limit
+MAX_SPEED         = _t["max_speed"]      # m/s - command speed ceiling
+MANUAL_MAX_SPEED  = MAX_SPEED
+MANUAL_MAX_W      = _t["manual_max_w"]
 
 _MAX_W_RAW        = _t["max_w_raw"]
 W_CLAMP_PCT       = _t["w_clamp_pct"]
@@ -108,6 +112,7 @@ MAX_ADVANCE       = PENALTY_DEPTH - 50  # goalie must stay inside penalty box
 
 PRESSURE_DIST     = 500      # mm — opponent "under pressure" radius
 PASS_CLEAR        = 400      # mm — pass lane clearance
+POSSESS_DIST 	  = 300
 
 # ═════════════════════════════════════════════════════════════════
 #  ANGULAR
@@ -123,6 +128,25 @@ LINEAR_KP         = _t["linear_kp"]   # mm -> m/s
 LINEAR_KD         = _t["linear_kd"]   # mm/s -> m/s
 ANGLE_EPSILON     = _t["angle_epsilon"]  # deadband below which ω = 0
 BLEND_DIST        = 300.0                # mm — below this, full rotation allowed
+
+# NOTE: MAX_W (above) caps PD angular output at 0.30 rad/s via W_CLAMP_PCT.
+# The legacy tuning values angular_normal_speed=0.5 / angular_fast_speed=0.6
+# (stored in tuning.json) exceed this limit — they are used only in the
+# proportional behaviour layer (ball_nav / Movement.py), not in the PD
+# controller.  Raise MAX_W_RAW or W_CLAMP_PCT in tuning.json to
+# increase the PD controller's angular ceiling.
+
+# ─────────────────────────────────────────────────────────────────
+#  PD HARDWARE COMPENSATION DEFAULTS
+# ─────────────────────────────────────────────────────────────────
+# Per-robot values are stored in movement_calibration.json.
+# These are the fallback when no per-robot calibration exists.
+
+MIN_V             = 0.0    # m/s   — minimum linear command (dead-zone floor)
+MIN_W             = 0.0    # rad/s — minimum angular command (dead-zone floor)
+
+LINEAR_AMAX       = 2.105  # m/s²   — max linear acceleration / deceleration
+ANGULAR_AMAX      = 28.4   # rad/s² — max angular acceleration / deceleration
 
 # Threshold zones for go_to_target (mm)
 KICKER_ZONE        = 70       # below this, speed is 0

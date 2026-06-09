@@ -190,10 +190,12 @@ with Option A (`option_a_movement`) or Option C (`option_c_movement`).
 
 ## Tuning
 
-There are two levels of gain storage:
+There are two levels of gain storage — a global default layer and a per-robot
+override layer.  They stack and are fully compatible.
 
-**Default gains** — `tuning.json` at the project root (or `constants.py`
-defaults if the file is missing):
+### Layer 1 — Global defaults
+
+`tuning.json` at the project root → loaded into `constants.py` at startup:
 
 ```json
 {
@@ -204,11 +206,65 @@ defaults if the file is missing):
 }
 ```
 
-**Per-robot gains** — `movement_calibration.json` at the project root,
-written by the calibration harness (`pd_calibration.py`) or the UI Tuning tab.
-These override the defaults for a specific robot ID and team colour.
+The constants file also sets:
 
-Plain meaning:
+```python
+MIN_V = 0.0    # m/s   — minimum linear command (dead-zone floor)
+MIN_W = 0.0    # rad/s — minimum angular command (dead-zone floor)
+```
+
+These are the fallback for every robot that has no per-robot calibration.
+
+### Layer 2 — Per-robot overrides
+
+`movement_calibration.json` at the project root, written by the PD Calibration
+page or the calibration harness.  Keys are `"yellow/0"`, `"blue/3"`, etc.
+
+```json
+{
+  "yellow/0": {
+    "turn_kp": 1.2,
+    "turn_kd": 0.08,
+    "linear_kp": 0.0025,
+    "linear_kd": 0.0004,
+    "speed_scale": 0.95,
+    "lateral_drift_per_m": 5.0,
+    "stop_overshoot_mm": 20.0,
+    "min_v": 0.05,
+    "min_w": 0.03
+  }
+}
+```
+
+Hardware-compensation fields (Layer 2 only):
+
+| Field | Meaning |
+|---|---|
+| `speed_scale` | Actual/commanded speed ratio from calibration. < 1 means robot is slow. |
+| `lateral_drift_per_m` | Side drift in mm per metre of forward travel. |
+| `stop_overshoot_mm` | How far the robot rolls past the target; aim this much short. |
+| `min_v` | Minimum linear command to overcome dead-zone. |
+| `min_w` | Minimum angular command to overcome dead-zone. |
+
+When `get_motion_controller(robot_id, is_yellow)` is called, it loads Layer 2
+if available, otherwise falls back to Layer 1.  The PD Calibration page shows
+a banner indicating which layer is active ("Source: movement_calibration.json"
+in orange vs "Source: constants.py" in grey).
+
+### Compatibility with legacy tuning
+
+`tuning.json` also stores `angular_normal_speed`, `angular_fast_speed`, and
+related proportional-layer values used by `ball_nav` / `Movement.py`.  These
+are **separate from the PD gains** and do not interact with Layers 1–2.
+
+Important ceiling: `MAX_W = max_w_raw * w_clamp_pct = 0.5 * 0.60 = 0.30 rad/s`.
+The PD controller's angular output is hard-capped here.  The legacy values
+`angular_normal_speed = 0.5` and `angular_fast_speed = 0.6` exceed this cap —
+they only apply in the proportional behaviour layer and never reach the PD
+controller.  To raise the PD ceiling, edit `max_w_raw` or `w_clamp_pct` in
+`tuning.json`; the proportional layer is unaffected.
+
+Plain meaning of PD gains:
 
 - `kp`: how hard the robot pushes toward the target.
 - `kd`: how much the robot damps/brakes as the error changes.

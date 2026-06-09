@@ -56,6 +56,7 @@ python main.py
 Available modes:
 python main.py --mode goalie
 python main.py --mode 1v1
+python main.py --mode voronoi_test
 python main.py --mode obstacle
 python main.py --mode coop
 python main.py --mode 6v6

@@ -3,6 +3,7 @@ import time
 from typing import Optional, Tuple
 
 from TeamControl.robot import constants as C
+from TeamControl.robot.motion.accel import AccelLimiter
 from TeamControl.robot.motion.hardware import (
     apply_hardware_gains,
     apply_min_angular_command,
@@ -93,10 +94,15 @@ class RobotMotionController:
             out_limit=C.MAX_SPEED,
         )
 
+        self.linear_accel = AccelLimiter(C.LINEAR_AMAX)
+        self.angular_accel = AccelLimiter(C.ANGULAR_AMAX)
+
     def reset(self) -> None:
         """Forget previous errors."""
         self.angular_pd.reset()
         self.linear_pd.reset()
+        self.linear_accel.reset()
+        self.angular_accel.reset()
 
     def get_gains(self) -> dict:
         """Show the gains being used right now."""
@@ -222,6 +228,7 @@ class RobotMotionController:
         if use_hardware:
             w = apply_min_angular_command(w, self.min_w)
 
+        w = self.angular_accel.limit(w)
         return w
 
     def translational_motion(
@@ -259,6 +266,7 @@ class RobotMotionController:
             vx, vy = apply_hardware_gains(vx, vy, self.get_gains())
             vx, vy = apply_min_linear_command(vx, vy, self.min_v)
 
+        vx, vy = self.linear_accel.limit((vx, vy))
         return vx, vy
 
     def general_motion(
@@ -309,3 +317,45 @@ class RobotMotionController:
         angular_scale = 1.0 - max(0.0, min(0.6, dist / C.BLEND_DIST))
 
         return vx * linear_scale, vy * linear_scale, w * angular_scale
+
+    def tuned_velocity(
+        self,
+        vx: float,
+        vy: float,
+        w: float,
+        use_hardware: bool = True,
+    ) -> Tuple[float, float, float]:
+        """
+        Apply this robot's saved motion calibration to an existing velocity.
+
+        This is for behaviours that already made a tactical velocity decision
+        such as kick/dribble logic, but still need the same per-robot hardware
+        compensation used by the PD target controller.
+        """
+        vx = float(vx)
+        vy = float(vy)
+        w = float(w)
+
+        speed = math.hypot(vx, vy)
+        if speed > C.MAX_SPEED and speed > 0.0:
+            scale = C.MAX_SPEED / speed
+            vx *= scale
+            vy *= scale
+
+        w = max(-C.MAX_W, min(C.MAX_W, w))
+
+        if use_hardware:
+            vx, vy = apply_hardware_gains(vx, vy, self.get_gains())
+            vx, vy = apply_min_linear_command(vx, vy, self.min_v)
+            w = apply_min_angular_command(w, self.min_w)
+
+            speed = math.hypot(vx, vy)
+            if speed > C.MAX_SPEED and speed > 0.0:
+                scale = C.MAX_SPEED / speed
+                vx *= scale
+                vy *= scale
+            w = max(-C.MAX_W, min(C.MAX_W, w))
+
+        vx, vy = self.linear_accel.limit((vx, vy))
+        w = self.angular_accel.limit(w)
+        return vx, vy, w

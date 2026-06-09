@@ -1,12 +1,14 @@
 import math
 
+from TeamControl.robot import constants as C
+
 
 DEFAULT_HARDWARE_GAINS = {
     "speed_scale": 1.0,
     "lateral_drift_per_m": 0.0,
     "stop_overshoot_mm": 0.0,
-    "min_v": 0.0,
-    "min_w": 0.0,
+    "min_v": C.MIN_V,
+    "min_w": C.MIN_W,
 }
 
 
