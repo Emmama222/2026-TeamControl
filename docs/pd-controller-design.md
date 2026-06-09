@@ -8,16 +8,18 @@ The movement controller turns a target into robot commands:
 Vision / Game Controller / Robot Receiver
         -> Behaviour Tree
         -> Intent Executor
-        -> Movement.py
+        -> motion/controller.py  (RobotMotionController)
         -> RobotCommand(vx, vy, w, kick, dribble)
 ```
 
-For now, the intended executor strategy is **Motion Strategy Option A**:
+The current shipping strategy is **Motion Strategy Option A**:
 
 1. Rotate until the robot faces the target direction.
 2. Drive toward the target position.
 
-`general_motion()` is available, but it is the experimental Option C path.
+`general_motion()` is available as Option C (guarded combined movement).
+Switch to Option C only after Option A is stable and validated in grSim — see
+the Option C section below.
 
 ---
 
@@ -49,30 +51,37 @@ speed = min(dist_mm / 1000.0 / time_remaining, MAX_SPEED)
 w_limit = min(angle_rad / time_remaining, MAX_W)
 ```
 
-`Mode` is just a shortcut for common deadlines:
+`strategy.py` exposes named time budgets and a helper to build the deadline:
 
-| Mode | Time budget | Meaning |
+| Constant | Time budget | Meaning |
 |---|---:|---|
-| `FAST` | 0.1 s | Move as fast as allowed |
-| `NORM` | 1.0 s | Normal movement |
-| `SLOW` | 2.0 s | Slower, careful approach |
+| `FAST` | 0.2 s | Move as fast as allowed |
+| `NORMAL` | 0.5 s | Normal movement |
+| `SLOW` | 0.8 s | Slower, careful approach |
 
 ```python
-deadline = time.monotonic() + Mode.NORM.value
+from TeamControl.robot.motion.strategy import get_deadline, NORMAL
+
+deadline = get_deadline(NORMAL)  # time.monotonic() + 0.5
 ```
 
 ---
 
 ## Main API
 
-Use one persistent `RobotMovement` per robot. This matters because the PD
-controller remembers the previous tick.
+Use one persistent `RobotMotionController` per robot. This matters because the
+PD controller remembers the previous tick — creating a new one each tick throws
+away the derivative history and disables the D term.
 
 ```python
-from TeamControl.robot.Movement import Mode, get_movement
+from TeamControl.robot.motion.controller import get_motion_controller
+from TeamControl.robot.motion.strategy import get_deadline, NORMAL
 
-mv = get_movement(robot_id, is_yellow)
+mv = get_motion_controller(robot_id, is_yellow)
 ```
+
+`get_motion_controller` is a factory that returns the same instance for a given
+`(robot_id, is_yellow)` pair, so calling it multiple times is safe.
 
 Important functions:
 
@@ -83,13 +92,13 @@ mv.is_close_to_target(current_xy, target_xy, threshold_mm=100.0)
 # Check if robot is facing the target heading
 mv.is_facing_dir(current_theta, target_theta, threshold_rad=0.1)
 
-# Rotate only. Returns w.
+# Rotate only. Returns w in rad/s.
 mv.rotational_motion(current_theta, target_theta, deadline)
 
-# Drive only. Returns vx, vy.
+# Drive only. Returns (vx, vy) in robot frame, m/s.
 mv.translational_motion(current_pos, target_xy, deadline)
 
-# Experimental combined movement. Returns vx, vy, w.
+# Option C: guarded combined movement. Returns (vx, vy, w).
 mv.general_motion(current_pos, target_xy, target_theta, deadline)
 ```
 
@@ -97,9 +106,20 @@ mv.general_motion(current_pos, target_xy, target_theta, deadline)
 
 ## Recommended Executor Logic
 
-This is Option A from `motion-strategy.md`.
+This is Option A from `motion-strategy.md`.  The helper `option_a_movement()`
+in `strategy.py` packages this up and returns a `RobotCommand` directly:
 
 ```python
+from TeamControl.robot.motion.strategy import option_a_movement, get_deadline, NORMAL
+
+cmd = option_a_movement(mv, current_pos, target_xy, target_theta, is_yellow)
+dispatch_q.put((cmd, 0.15))
+```
+
+If you need to call the controller directly:
+
+```python
+deadline = get_deadline(NORMAL)
 if not mv.is_facing_dir(current_pos[2], target_theta):
     w = mv.rotational_motion(current_pos[2], target_theta, deadline)
     dispatch_q.put((RobotCommand(id, 0, 0, w, 0, 0, yellow), 0.15))
@@ -116,9 +136,18 @@ Why this is the default:
 
 ---
 
-## Experimental Combined Movement
+## Option C — Guarded Combined Movement
 
-`general_motion()` is Option C.
+`general_motion()` is Option C. Use it after Option A is stable in grSim.
+
+```python
+from TeamControl.robot.motion.strategy import option_c_movement
+
+cmd = option_c_movement(mv, current_pos, target_xy, target_theta, is_yellow)
+dispatch_q.put((cmd, 0.15))
+```
+
+Or directly:
 
 ```python
 vx, vy, w = mv.general_motion(current_pos, target_xy, target_theta, deadline)
@@ -128,7 +157,7 @@ It does this:
 
 ```text
 if heading_error > 60 degrees:
-    rotate only
+    rotate only (same as Option A first step)
 else:
     drive and rotate together with scaling
 ```
@@ -139,30 +168,32 @@ Scaling means:
 - If the robot is far from the target position, reduce `w`.
 
 This helps reduce drift and local spinning, but it is still harder to debug
-than Option A.
+than Option A because `vx`, `vy`, and `w` all change at the same time.
+
+**When to upgrade from Option A to Option C:**
+
+1. Option A works reliably in grSim (robot reaches targets without oscillation).
+2. You observe that the sequential turn-then-drive path is too slow for your
+   match scenario.
+3. You are ready to retune `BLEND_DIST` in `constants.py` (default 300 mm) —
+   increase it if the robot spins too much during combined movement.
 
 ---
 
-## Legacy API
+## Legacy API (Option B — removed)
 
-Avoid this for the new Division B strategy:
-
-```python
-vx, vy, w = mv.velocity_to_target(
-    robot_pos,
-    target=linear_xy,
-    turning_target=facing_pos,
-)
-```
-
-This is the older combined movement API. It can still be useful for old code,
-but it should not be the main shipping path.
+The old `velocity_to_target()` combined-movement API (Option B) has been
+removed. Do not use it. If you find a reference to it in old code, replace it
+with Option A (`option_a_movement`) or Option C (`option_c_movement`).
 
 ---
 
 ## Tuning
 
-PD gains live in `tuning.json`:
+There are two levels of gain storage:
+
+**Default gains** — `tuning.json` at the project root (or `constants.py`
+defaults if the file is missing):
 
 ```json
 {
@@ -173,16 +204,20 @@ PD gains live in `tuning.json`:
 }
 ```
 
+**Per-robot gains** — `movement_calibration.json` at the project root,
+written by the calibration harness (`pd_calibration.py`) or the UI Tuning tab.
+These override the defaults for a specific robot ID and team colour.
+
 Plain meaning:
 
 - `kp`: how hard the robot pushes toward the target.
 - `kd`: how much the robot damps/brakes as the error changes.
-- Higher values are not always better; too high can cause oscillation.
+- Higher values are not always better; too high causes oscillation.
 
 Option C also uses:
 
 ```python
-BLEND_DIST = 300.0
+BLEND_DIST = 300.0  # mm — in constants.py
 ```
 
 Increase `BLEND_DIST` if the robot spins too much during combined movement.

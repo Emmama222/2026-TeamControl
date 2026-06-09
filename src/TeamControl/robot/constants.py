@@ -122,6 +122,7 @@ TURN_KD           = _t["turn_kd"]     # rad/s -> rad/s
 LINEAR_KP         = _t["linear_kp"]   # mm -> m/s
 LINEAR_KD         = _t["linear_kd"]   # mm/s -> m/s
 ANGLE_EPSILON     = _t["angle_epsilon"]  # deadband below which ω = 0
+BLEND_DIST        = 300.0                # mm — below this, full rotation allowed
 
 # Threshold zones for go_to_target (mm)
 KICKER_ZONE        = 70       # below this, speed is 0
