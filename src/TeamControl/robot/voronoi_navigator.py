@@ -16,21 +16,42 @@ from TeamControl.robot.ball_nav import (
 )
 from TeamControl.robot.constants import (
     CRUISE_SPEED,
+    DRIBBLE_SPEED,
     LOOP_RATE,
     MAX_W,
     TURN_GAIN,
 )
+from TeamControl.world.field_config import (
+    VORONOI_CHASE_RAMP_DIST_MM,
+    VORONOI_CHASE_SPEED_SCALE,
+    VORONOI_DENSITY_PERCENT,
+    VORONOI_FIELD_TARGET_MARGIN_MM,
+    VORONOI_HORIZON_MS,
+    VORONOI_MAX_DENSITY_NODES,
+    VORONOI_MIN_SPEED,
+    VORONOI_POSSESSION_ANGLE_RAD,
+    VORONOI_POSSESSION_DIST_MM,
+    VORONOI_PRECISION_MIN_SPEED,
+    VORONOI_PRECISION_RAMP_DIST_MM,
+    VORONOI_PRECISION_SPEED_SCALE,
+    VORONOI_SMOOTH_ALPHA,
+    VORONOI_STEAL_FRONT_ANGLE_RAD,
+    VORONOI_STEAL_FRONT_DIST_MM,
+    VORONOI_TARGET_STOP_MM,
+    VORONOI_WAYPOINT_REACHED_MM,
+)
 from TeamControl.world.transform_cords import world2robot
 
 
-CHASE_SPEED = CRUISE_SPEED * 0.80
-WAYPOINT_REACHED_MM = 180.0
-TARGET_STOP_MM = 80.0
-SMOOTH_ALPHA = 0.35
-POSSESSION_DIST_MM = 90.0
-POSSESSION_ANGLE_RAD = 0.015
-STEAL_FRONT_DIST_MM = 650.0
-STEAL_FRONT_ANGLE_RAD = 0.35
+CHASE_SPEED = CRUISE_SPEED * VORONOI_CHASE_SPEED_SCALE
+PRECISION_APPROACH_SPEED = DRIBBLE_SPEED * VORONOI_PRECISION_SPEED_SCALE
+WAYPOINT_REACHED_MM = VORONOI_WAYPOINT_REACHED_MM
+TARGET_STOP_MM = VORONOI_TARGET_STOP_MM
+SMOOTH_ALPHA = VORONOI_SMOOTH_ALPHA
+POSSESSION_DIST_MM = VORONOI_POSSESSION_DIST_MM
+POSSESSION_ANGLE_RAD = VORONOI_POSSESSION_ANGLE_RAD
+STEAL_FRONT_DIST_MM = VORONOI_STEAL_FRONT_DIST_MM
+STEAL_FRONT_ANGLE_RAD = VORONOI_STEAL_FRONT_ANGLE_RAD
 
 
 def run_voronoi_navigator(
@@ -43,7 +64,10 @@ def run_voronoi_navigator(
 ):
     """Run one robot through the live WorldMap Voronoi planner."""
     cache = TickCache(wm)
-    planner = PlannerAPI(density_percent=60.0, max_density_nodes=140)
+    planner = PlannerAPI(
+        density_percent=VORONOI_DENSITY_PERCENT,
+        max_density_nodes=VORONOI_MAX_DENSITY_NODES,
+    )
     active_target = None
     sm_vx, sm_vy, sm_w = 0.0, 0.0, 0.0
 
@@ -62,7 +86,10 @@ def run_voronoi_navigator(
             time.sleep(LOOP_RATE)
             continue
 
-        target = sanitize_field_target(cache.ball.position, margin=100.0)
+        target = sanitize_field_target(
+            cache.ball.position,
+            margin=VORONOI_FIELD_TARGET_MARGIN_MM,
+        )
         if target is None:
             _send_stop(dispatch_q, robot_id, is_yellow)
             time.sleep(LOOP_RATE)
@@ -77,7 +104,7 @@ def run_voronoi_navigator(
         try:
             obstacles = wm.get_planning_obstacles(
                 now_s=now,
-                horizon_ms=250,
+                horizon_ms=VORONOI_HORIZON_MS,
                 ignore_robots=ignore_robots,
             )
             steal_ignore_keys = _steal_ignore_keys(
@@ -108,7 +135,11 @@ def run_voronoi_navigator(
             time.sleep(LOOP_RATE)
             continue
 
-        if not plan.is_path_free and not plan.waypoints:
+        if (
+            not plan.is_path_free
+            and not plan.waypoints
+            and not plan.endpoint_precision_mode
+        ):
             _send_stop(dispatch_q, robot_id, is_yellow)
             time.sleep(LOOP_RATE)
             continue
@@ -126,13 +157,30 @@ def run_voronoi_navigator(
         rel_move = world2robot(rpos, movement_target)
         rel_ball = world2robot(rpos, target)
         distance_to_target = math.hypot(rel_move[0], rel_move[1])
+        target_speed = (
+            PRECISION_APPROACH_SPEED
+            if plan.endpoint_precision_mode
+            else CHASE_SPEED
+        )
 
         nav_vx, nav_vy = move_toward(
             rel_move,
-            CHASE_SPEED,
-            ramp_dist=450.0,
-            stop_dist=TARGET_STOP_MM if plan.is_path_free else WAYPOINT_REACHED_MM,
-            min_speed=0.06,
+            target_speed,
+            ramp_dist=(
+                VORONOI_PRECISION_RAMP_DIST_MM
+                if plan.endpoint_precision_mode
+                else VORONOI_CHASE_RAMP_DIST_MM
+            ),
+            stop_dist=(
+                TARGET_STOP_MM
+                if plan.is_path_free or plan.endpoint_precision_mode
+                else WAYPOINT_REACHED_MM
+            ),
+            min_speed=(
+                VORONOI_PRECISION_MIN_SPEED
+                if plan.endpoint_precision_mode
+                else VORONOI_MIN_SPEED
+            ),
         )
 
         ang_ball = math.atan2(rel_ball[1], rel_ball[0])

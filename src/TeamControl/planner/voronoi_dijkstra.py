@@ -12,6 +12,17 @@ from TeamControl.world.field_config import (
     FIELD_X_MIN,
     FIELD_Y_MAX,
     FIELD_Y_MIN,
+    ROBOT_RADIUS_MM,
+    VORONOI_BOUNDARY_INSET_MM,
+    VORONOI_CONNECTION_COUNT,
+    VORONOI_CONNECTION_RADIUS_MM,
+    VORONOI_DENSITY_PERCENT,
+    VORONOI_ESCAPE_MARGIN_MM,
+    VORONOI_HORIZON_MS,
+    VORONOI_MAX_DENSITY_NODES,
+    VORONOI_MIN_ESCAPE_STEP_MM,
+    VORONOI_OBSTACLE_COST_WEIGHT,
+    VORONOI_TARGET_DEAD_ZONE_MM,
 )
 from TeamControl.world.map.geometry import distance_2_segment
 from TeamControl.world.map.voronoi_generator import (
@@ -52,14 +63,14 @@ class VoronoiDijkstraPlanner:
     def __init__(
         self,
         *,
-        target_dead_zone_mm: float = 150.0,
-        connection_count: int = 8,
-        connection_radius_mm: float = 2200.0,
-        horizon_ms: int | float = 250,
-        density_percent: float = 60.0,
-        max_density_nodes: int = 140,
-        obstacle_cost_weight: float = 2.0,
-        boundary_inset_mm: float = 100.0,
+        target_dead_zone_mm: float = VORONOI_TARGET_DEAD_ZONE_MM,
+        connection_count: int = VORONOI_CONNECTION_COUNT,
+        connection_radius_mm: float = VORONOI_CONNECTION_RADIUS_MM,
+        horizon_ms: int | float = VORONOI_HORIZON_MS,
+        density_percent: float = VORONOI_DENSITY_PERCENT,
+        max_density_nodes: int = VORONOI_MAX_DENSITY_NODES,
+        obstacle_cost_weight: float = VORONOI_OBSTACLE_COST_WEIGHT,
+        boundary_inset_mm: float = VORONOI_BOUNDARY_INSET_MM,
     ) -> None:
         self.target_dead_zone_mm = float(target_dead_zone_mm)
         self.connection_count = int(connection_count)
@@ -88,6 +99,16 @@ class VoronoiDijkstraPlanner:
 
         start = _point2(start_pos_mm)
         target = clamp_to_field(_point2(target_pos_mm))
+
+        escape_waypoint = self._escape_waypoint_from_containing_obstacles(
+            world_map,
+            start,
+            target,
+            now_s=now_s,
+            ignore_robots=ignore_robots,
+        )
+        if escape_waypoint is not None:
+            return PlanResult(target_mm=target, waypoints_mm=(escape_waypoint,))
 
         if world_map.is_path_free(
             start,
@@ -162,6 +183,62 @@ class VoronoiDijkstraPlanner:
             for node_id in ids[1:]
         )
         return PlanResult(target_mm=target, waypoints_mm=waypoints)
+
+    def _escape_waypoint_from_containing_obstacles(
+        self,
+        world_map,
+        start: Point,
+        target: Point,
+        *,
+        now_s: float | None,
+        ignore_robots: set[RobotKey],
+    ) -> Point | None:
+        try:
+            obstacles = world_map.get_planning_obstacles(
+                now_s=now_s,
+                horizon_ms=self.horizon_ms,
+                ignore_robots=ignore_robots,
+            )
+        except Exception:
+            return None
+
+        push_x = 0.0
+        push_y = 0.0
+        max_overlap = 0.0
+        for obstacle in obstacles:
+            pos = _obstacle_pos(obstacle)
+            radius = _obstacle_radius(obstacle) + ROBOT_RADIUS_MM
+            dx = start[0] - pos[0]
+            dy = start[1] - pos[1]
+            dist = hypot(dx, dy)
+            overlap = radius - dist
+            if overlap < 0.0:
+                continue
+            if dist <= 1e-6:
+                dx = target[0] - pos[0]
+                dy = target[1] - pos[1]
+                dist = hypot(dx, dy)
+            if dist <= 1e-6:
+                dx, dy, dist = 1.0, 0.0, 1.0
+            weight = max(overlap, 1.0)
+            push_x += (dx / dist) * weight
+            push_y += (dy / dist) * weight
+            max_overlap = max(max_overlap, overlap)
+
+        push_len = hypot(push_x, push_y)
+        if push_len <= 1e-6:
+            return None
+
+        step_mm = max(
+            VORONOI_MIN_ESCAPE_STEP_MM,
+            max_overlap + VORONOI_ESCAPE_MARGIN_MM,
+        )
+        return clamp_to_field(
+            (
+                start[0] + (push_x / push_len) * step_mm,
+                start[1] + (push_y / push_len) * step_mm,
+            )
+        )
 
     def _previous_path_is_valid(
         self,
@@ -277,6 +354,23 @@ class VoronoiDijkstraPlanner:
 
 def _point2(point: tuple[float, ...] | list[float]) -> Point:
     return (float(point[0]), float(point[1]))
+
+
+def _obstacle_pos(obstacle: object) -> Point:
+    pos = getattr(obstacle, "pos_mm", obstacle)
+    return (float(pos[0]), float(pos[1]))
+
+
+def _obstacle_radius(obstacle: object) -> float:
+    if hasattr(obstacle, "radius_mm"):
+        return float(getattr(obstacle, "radius_mm"))
+    if hasattr(obstacle, "safe_radius"):
+        return float(getattr(obstacle, "safe_radius"))
+    if hasattr(obstacle, "radius"):
+        return float(getattr(obstacle, "radius"))
+    if isinstance(obstacle, (tuple, list)) and len(obstacle) >= 3:
+        return float(obstacle[2])
+    return 0.0
 
 
 def clamp_to_field(point: Point) -> Point:

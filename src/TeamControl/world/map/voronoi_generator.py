@@ -10,8 +10,11 @@ from typing import Iterable, Literal
 from TeamControl.world.field_config import (
     FIELD_LENGTH_MM,
     FIELD_WIDTH_MM,
-    ROBOT_RADIUS_MM,
-    SAFE_MARGIN,
+    VORONOI_BOUNDARY_INSET_MM,
+    VORONOI_GENERATOR_MAX_DENSITY_NODES,
+    VORONOI_GENERATOR_OBSTACLE_COST_WEIGHT,
+    VORONOI_MIN_CLEARANCE_MM,
+    VORONOI_RENDER_DENSITY_PERCENT,
 )
 from TeamControl.world.map.geometry import distance_2_segment
 from TeamControl.world.map.renderer import RenderCircle, RenderLayer, RenderPolyline
@@ -114,15 +117,15 @@ def generate_bounded_voronoi_map(
     *,
     field_length_mm: float = FIELD_LENGTH_MM,
     field_width_mm: float = FIELD_WIDTH_MM,
-    min_clearance_mm: float = ROBOT_RADIUS_MM + SAFE_MARGIN,
-    boundary_inset_mm: float = 100.0,
+    min_clearance_mm: float = VORONOI_MIN_CLEARANCE_MM,
+    boundary_inset_mm: float = VORONOI_BOUNDARY_INSET_MM,
     placement_mode: PlacementMode = "density_grid",
-    density_percent: float = 10.0,
+    density_percent: float = VORONOI_RENDER_DENSITY_PERCENT,
     grid_spacing_x_mm: float | None = None,
     grid_spacing_y_mm: float | None = None,
-    max_density_nodes: int = 240,
+    max_density_nodes: int = VORONOI_GENERATOR_MAX_DENSITY_NODES,
     obstacles: Iterable[VoronoiObstacle | object] = (),
-    obstacle_cost_weight: float = 0.0,
+    obstacle_cost_weight: float = VORONOI_GENERATOR_OBSTACLE_COST_WEIGHT,
     include_perimeter_edges: bool = True,
     seed: int | None = None,
 ) -> BoundedVoronoiMap:

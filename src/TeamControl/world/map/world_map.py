@@ -5,6 +5,12 @@ from typing import Iterable, Optional
 
 from TeamControl.world.map.geometry import linear_velocity
 from TeamControl.world.map.obstacles import Obstacle,ROBOT_RADIUS_MM
+from TeamControl.world.field_config import (
+    VORONOI_HORIZON_MS,
+    VORONOI_OBSTACLE_COST_WEIGHT,
+    VORONOI_RENDER_DENSITY_PERCENT,
+    VORONOI_RENDER_MAX_DENSITY_NODES,
+)
 
 
 R = ROBOT_RADIUS_MM   # mm - robot radius
@@ -248,12 +254,12 @@ class WorldMap:
     def get_render_data(
         self,
         now_s=None,
-        horizon_ms=250,
+        horizon_ms=VORONOI_HORIZON_MS,
         extra_layers=(),
         include_voronoi=False,
-        voronoi_density_percent=10.0,
-        voronoi_max_density_nodes=80,
-        voronoi_obstacle_cost_weight=2.0,
+        voronoi_density_percent=VORONOI_RENDER_DENSITY_PERCENT,
+        voronoi_max_density_nodes=VORONOI_RENDER_MAX_DENSITY_NODES,
+        voronoi_obstacle_cost_weight=VORONOI_OBSTACLE_COST_WEIGHT,
     ):
         """Return serializable, toggleable layers for a debug renderer."""
         from TeamControl.world.map.renderer import Renderer

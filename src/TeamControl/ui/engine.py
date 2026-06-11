@@ -18,6 +18,12 @@ from TeamControl.process_workers.wm_runner import WMWorker
 from TeamControl.process_workers.robot_recv_runner import RobotRecv
 from TeamControl.process_workers.voronoi_map_runner import WorldMapRenderWorker
 from TeamControl.world.model_manager import WorldModelManager
+from TeamControl.world.field_config import (
+    VORONOI_HORIZON_MS,
+    VORONOI_OBSTACLE_COST_WEIGHT,
+    VORONOI_RENDER_DENSITY_PERCENT,
+    VORONOI_RENDER_MAX_DENSITY_NODES,
+)
 from TeamControl.dispatcher.dispatch import Dispatcher
 from TeamControl.utils.yaml_config import Config
 from TeamControl.world.recording import AsyncSnapshotRecorder
@@ -497,7 +503,7 @@ class SimEngine(QObject):
         try:
             planning_obstacles = self._wm.get_planning_obstacles(
                 now_s=now_s,
-                horizon_ms=250,
+                horizon_ms=VORONOI_HORIZON_MS,
             )
         except Exception as exc:
             self.log_message.emit(f"[map] render worker obstacle error: {exc}")
@@ -522,9 +528,9 @@ class SimEngine(QObject):
                 "ball_vel_mmps": ball_vel_mmps,
                 "planner_paths": tuple(self._latest_planner_paths.values()),
                 "include_voronoi": True,
-                "density_percent": 10.0,
-                "max_density_nodes": 80,
-                "obstacle_cost_weight": 2.0,
+                "density_percent": VORONOI_RENDER_DENSITY_PERCENT,
+                "max_density_nodes": VORONOI_RENDER_MAX_DENSITY_NODES,
+                "obstacle_cost_weight": VORONOI_OBSTACLE_COST_WEIGHT,
             }
             if field_length_mm is not None and field_width_mm is not None:
                 request["field_length_mm"] = field_length_mm
