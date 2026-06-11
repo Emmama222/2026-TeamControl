@@ -12,17 +12,47 @@ src/TeamControl/planner/voronoi_dijkstra.py
 src/TeamControl/robot/voronoi_navigator.py
 ```
 
+## Current Entry Point
+
+Use the public facade in `src/TeamControl/planner/` for robot behaviours and
+skill execution:
+
+```python
+from TeamControl.planner import PlannerAPI, PlannerInput
+
+planner = PlannerAPI()
+planner_output = planner.plan(
+    PlannerInput(
+        robot_id=robot_id,
+        is_yellow=is_yellow,
+        current_pose=current_pose,
+        target_pose=target_pose,
+        obstacles=planning_obstacles,
+        robot_reached_current_waypoint=reached_current_waypoint,
+        now_s=now_s,
+    )
+)
+```
+
+`PlannerAPI` is a normal in-process object. It is not a multiprocessing worker
+or shared service. Keep one planner instance in the robot/skill process that is
+using it so its per-robot waypoint cache stays local and predictable.
+
+For how the live `WorldMap` is started and which `wm` methods expose planning
+data, see [Active World Map](active-world-map.md#activation-and-api).
+
 ## Inputs
 
-The planner should receive:
+The planner receives:
 
 - current robot position
 - target point
-- `WorldMap`
+- either explicit planning obstacles or a `WorldMap`-compatible object
 - optional previous planner state
 - optional controlled robot identity for ignored obstacles
 
-The planner should build or receive a bounded Voronoi map that already includes:
+The low-level planner builds or receives a bounded Voronoi map that already
+includes:
 
 - virtual grid sites
 - predicted robot obstacles from `WorldMap.get_planning_obstacles()`
@@ -124,7 +154,21 @@ and no replan is performed. The planner also clears any previous planned
 waypoints in this case. If it is `False`, the manager checks whether an
 existing waypoint path can still be used before running a fresh Dijkstra plan.
 
-## Rule 2a: Reuse Existing Path When Valid
+## Rule 2a: Escape When Already Inside Clearance
+
+If the controlled robot starts inside another obstacle's inflated clearance,
+normal path checks can reject every segment that begins at the robot. Without a
+special case, the planner cannot connect the start node to the graph, returns no
+waypoints, and the navigator stops.
+
+The low-level planner now handles that invalid starting state before normal
+direct-path and Dijkstra planning. It asks the path map for planning obstacles,
+finds obstacles whose clearance radius already contains the start point, and
+returns one short waypoint pointing outward from those obstacles. Once the robot
+has moved out of the containing clearance, later ticks return to the usual
+direct-path, cached-route, or Dijkstra behavior.
+
+## Rule 2b: Reuse Existing Path When Valid
 
 If the direct path is not free, the planner may reuse a previous planned path
 instead of rebuilding from scratch.
@@ -178,7 +222,7 @@ When direct path and cached path both fail:
 
 ## Expected Public API
 
-Main class:
+Low-level graph-search class:
 
 ```python
 class VoronoiDijkstraPlanner:
@@ -202,8 +246,9 @@ future Skill Intent Executor should normally call `PlannerAPI` instead:
 planner_output = planner.plan(planner_input)
 ```
 
-The planner API owns the per-robot route cache. `WorldModel` remains the source
-of obstacle/world snapshots.
+The planner API owns the per-robot route cache in a local dict keyed by
+`(is_yellow, robot_id)`. `WorldModel` remains the source of world snapshots and
+planning obstacle snapshots.
 
 ## Waypoint Manager Adapter
 
@@ -239,6 +284,21 @@ is free, the field-clamped target is returned.
 `WorldModel` should provide world snapshots, obstacle snapshots, and render
 data. The planner API owns route state and waypoint decisions. This keeps the
 world layer from turning into a behavior/planning service.
+
+When using the live shared `WorldModel`, callers commonly snapshot planning
+obstacles first:
+
+```python
+planning_obstacles = wm.get_planning_obstacles(
+    now_s=now_s,
+    horizon_ms=250,
+    ignore_robots=((is_yellow, robot_id),),
+)
+```
+
+Passing explicit obstacles makes the planner tick deterministic from the
+caller's point of view. Passing `world_map=wm` is also supported, but that keeps
+path checks and obstacle reads behind the world-map proxy for that call.
 
 ## Ball-Steal Clearance Exception
 

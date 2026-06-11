@@ -17,6 +17,45 @@ SSL Vision detection frame
 The map stores observations in world coordinates. Convert to a robot-relative
 frame only when a controller needs to issue movement commands.
 
+## Activation And API
+
+The world map is activated by starting the TeamControl backend. Both entry
+points create a manager-backed `WorldModel` and start `WMWorker`, which feeds
+vision/game-controller updates into `WorldModel.world_map`:
+
+```shell
+python ui_main.py
+python main.py --mode voronoi_test
+```
+
+In code, the live shared model is created through `WorldModelManager`:
+
+```python
+from TeamControl.world.model_manager import WorldModelManager
+
+wm_manager = WorldModelManager()
+wm_manager.start()
+wm = wm_manager.WorldModel()
+```
+
+Robot behaviours do not need to construct `WorldMap` directly. They receive the
+shared `wm` proxy from the process launcher and use its public methods:
+
+```python
+frame = wm.get_latest_frame()
+snapshot = wm.snapshot()
+planning_obstacles = wm.get_planning_obstacles(
+    now_s=now_s,
+    horizon_ms=250,
+    ignore_robots=((is_yellow, robot_id),),
+)
+```
+
+For planner integration, pass those frozen obstacle snapshots into
+`PlannerInput.obstacles`. See [Voronoi Planner Rules](voronoi-planner-rules.md)
+for the planner-side API and [Multiprocessing](Multiprocessing.md) for the
+process boundary.
+
 ## Vision Timestamps
 
 SSL Vision detection frames provide:
@@ -97,8 +136,9 @@ The effective radius expands with speed:
 radius_mm = safe_radius_mm + speed_mmps * prediction_horizon_s
 ```
 
-The Voronoi planner should build from this frozen view, follow only a short path
-segment, revalidate that segment against the newest map, and replan frequently.
+The planner should usually consume this frozen obstacle view through
+`PlannerInput.obstacles`. That keeps one control tick deterministic even though
+the underlying `WorldModel` is shared through a multiprocessing manager.
 
 ## Ball Tracking
 
@@ -160,7 +200,7 @@ Ball
 Velocity arrows show `250 ms` of travel. Predicted-clearance circles are hidden
 by default and include both the requested horizon and current observation age.
 
-Future maps should provide their own layers without importing Qt:
+Render producers provide their own layers without importing Qt:
 
 ```python
 voronoi = RenderLayer(
@@ -178,16 +218,15 @@ home field, world-map field, and calibration field without restarting the UI.
 Debug render frames are requested at `10 Hz` only while the `World Map` tab is
 visible, keeping the normal dashboard path lightweight.
 
-## Voronoi Integration Plan
+## Voronoi Integration
 
-The next contained implementation steps are:
+The current Voronoi integration is split across two paths:
 
-1. Convert `PlanningObstacle`s into clearance circles.
-2. Merge overlapping expanded circles into blocked clusters.
-3. Build a Voronoi graph from a frozen planning view.
-4. Reject graph edges that violate dynamic clearance.
-5. Follow only the next waypoint or short segment.
-6. Revalidate the immediate segment and replan when the live map changes.
+- `PlannerAPI` runs inside the robot/skill process and owns per-robot waypoint
+  state.
+- `WorldMapRenderWorker` runs as a background process for UI/debug render data.
+- `WorldMap.get_planning_obstacles()` provides predicted obstacle snapshots for
+  both paths.
 
 The global planner proposes a route. The local navigator remains responsible
 for braking and replanning when moving obstacles invalidate that route.

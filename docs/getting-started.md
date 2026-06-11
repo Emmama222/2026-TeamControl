@@ -50,6 +50,10 @@ Point to:
 ## Run the UI
 python ui_main.py
 
+The UI starts the shared world model and world-map update worker. For the API
+used by robot behaviours and planners, see
+[`docs/active-world-map.md`](active-world-map.md#activation-and-api).
+
 ## Run TeamControl Headless
 python main.py
 
@@ -60,6 +64,9 @@ python main.py --mode voronoi_test
 python main.py --mode obstacle
 python main.py --mode coop
 python main.py --mode 6v6
+
+`voronoi_test` is the quickest mode for seeing the active world map, planning
+obstacles, Voronoi map layer, and planned-path layer working together.
 
 ## Run With grSim
 To install grSim, please use one of the following. 
@@ -96,6 +103,7 @@ Common checks:
 ## Next Steps
 - Developers: `CONTRIBUTING.md`
 - Network ports: `docs/SSL-NetworkPorts.md`
+- Active world map API: `docs/active-world-map.md`
 - Multiprocessing internals: `docs/Multiprocessing.md`
 - Writing code: `https://www.turtlerabbit.org/docs/python-code-standards/`
 - RoboCup SSL Official GitHub Repositories: `https://github.com/RoboCup-SSL`
