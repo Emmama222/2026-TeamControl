@@ -3,6 +3,10 @@ from multiprocessing import Event, Queue
 import pytest
 
 from TeamControl.process_workers.voronoi_map_runner import WorldMapRenderWorker
+from TeamControl.world.field_config import (
+    VORONOI_BOUNDARY_INSET_MM,
+    VORONOI_MIN_CLEARANCE_MM,
+)
 from TeamControl.world.map.renderer import MapRenderData
 from TeamControl.world.map.voronoi_generator import VoronoiObstacle
 
@@ -76,7 +80,8 @@ def test_world_map_render_worker_generates_complete_render_data():
     ]
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
-    assert min(xs) == pytest.approx(-5780.0)
-    assert max(xs) == pytest.approx(5780.0)
-    assert min(ys) == pytest.approx(-3780.0)
-    assert max(ys) == pytest.approx(3780.0)
+    inset_mm = VORONOI_BOUNDARY_INSET_MM + VORONOI_MIN_CLEARANCE_MM
+    assert min(xs) == pytest.approx(-6000.0 + inset_mm)
+    assert max(xs) == pytest.approx(6000.0 - inset_mm)
+    assert min(ys) == pytest.approx(-4000.0 + inset_mm)
+    assert max(ys) == pytest.approx(4000.0 - inset_mm)

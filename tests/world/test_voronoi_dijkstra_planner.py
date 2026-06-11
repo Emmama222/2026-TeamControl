@@ -111,3 +111,33 @@ def test_voronoi_planner_finds_detour_when_direct_path_is_blocked():
     assert result.used_direct_path is False
     assert result.waypoints_mm
     assert result.waypoints_mm[-1] == result.target_mm
+
+
+def test_voronoi_planner_returns_escape_waypoint_when_start_inside_obstacle_clearance():
+    now_s = time.time()
+    world_map = WorldMap()
+    world_map.obs = [
+        Obstacle(
+            timestamp=now_s,
+            robot_id=1,
+            isYellow=True,
+            pos_mm=(0.0, 0.0, 0.0),
+            received_at_s=now_s,
+        )
+    ]
+    planner = VoronoiDijkstraPlanner(
+        density_percent=60.0,
+        max_density_nodes=120,
+        connection_count=10,
+    )
+
+    result = planner.plan(
+        world_map,
+        (50.0, 0.0),
+        (2000.0, 0.0),
+        now_s=now_s,
+    )
+
+    assert result.used_direct_path is False
+    assert result.waypoints_mm
+    assert result.waypoints_mm[0][0] > 210.0

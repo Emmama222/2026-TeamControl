@@ -8,7 +8,9 @@ from TeamControl.planner.voronoi_dijkstra import (
 from TeamControl.planner.waypoint_manager import (
     PlannerInput,
     PlannerOutput,
+    TargetClearanceStatus,
     VoronoiWaypointManager,
+    check_target_clearance,
 )
 
 __all__ = [
@@ -16,7 +18,9 @@ __all__ = [
     "PlannerInput",
     "PlannerOutput",
     "PlannerState",
+    "TargetClearanceStatus",
     "VoronoiDijkstraPlanner",
     "VoronoiWaypointManager",
+    "check_target_clearance",
     "plan",
 ]
