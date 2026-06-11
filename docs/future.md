@@ -245,7 +245,10 @@ Everything below is **software/AI/decision-making only** — no hardware or netw
 - **Fix Formation imports**: Relative imports so the package actually works.
 - **Type hints everywhere**: All function signatures should have type annotations. Catches bugs early.
 - **Structured logging**: Replace `print()` statements with proper leveled logging. Enable per-module log levels.
-- **Configuration validation**: Constants.py should validate ranges (speeds > 0, distances > 0, gains in [0, 10], etc.).
+- **Configuration validation**: `robot/constants.py` and
+  `world/field_config.py` should validate ranges (speeds > 0, distances > 0,
+  gains in [0, 10], Voronoi clearances/insets do not collapse the field, render
+  density stays within a UI-safe range, etc.).
 
 ---
 

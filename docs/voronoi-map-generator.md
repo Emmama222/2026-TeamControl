@@ -9,7 +9,7 @@ Generate a closed, bounded Voronoi navigation map for the SSL field:
 - Real field size: `9000 x 6000 mm`
 - Default navigation inset: `100 mm`
 - Default navigation bounds: `(-4400, 4400, -2900, 2900)`
-- Default clearance: `ROBOT_RADIUS_MM + SAFE_MARGIN`, currently `120 mm`
+- Default clearance: `ROBOT_RADIUS_MM + SAFE_MARGIN`, currently `100 mm`
 - Default clipped bounds: `(-4280, 4280, -2780, 2780)`
 - Output: closed Voronoi cells, graph nodes, and safe graph edges
 
@@ -25,6 +25,26 @@ In realtime Map Debug, the Voronoi boundary is generated from the latest
 SSL-Vision `FieldSize.field_length` and `FieldSize.field_width`. If vision has
 not supplied geometry yet, the generator falls back to the constants in
 `field_config.py`.
+
+## Shared Defaults
+
+The active defaults are centralized in `src/TeamControl/world/field_config.py`.
+Use the `VORONOI_*` constants there when changing planner, render, or navigator
+behaviour.
+
+Key map defaults:
+
+- `VORONOI_MIN_CLEARANCE_MM = ROBOT_RADIUS_MM + SAFE_MARGIN`
+- `VORONOI_BOUNDARY_INSET_MM`
+- `VORONOI_RENDER_DENSITY_PERCENT`
+- `VORONOI_RENDER_MAX_DENSITY_NODES`
+- `VORONOI_GENERATOR_MAX_DENSITY_NODES`
+- `VORONOI_OBSTACLE_COST_WEIGHT`
+- `VORONOI_HORIZON_MS`
+
+Live robot planning uses denser defaults than the UI overlay. The render layer
+is intentionally lighter so the debug worker can keep up while the map panel is
+open.
 
 ## Files
 
@@ -76,8 +96,8 @@ It creates a deterministic grid based on a density percentage:
 - `10%`: coarse map, currently `4 x 2 = 8` virtual sites
 - `100%`: tight practical map, capped by `--max-density-nodes`
 
-Why cap it? With `120 mm` clearance, a mathematically tight grid would place
-sites roughly every `240 mm`. On an `8800 x 5800 mm` inset field, that can mean
+Why cap it? With `100 mm` clearance, a mathematically tight grid would place
+sites roughly every `200 mm`. On an `8800 x 5800 mm` inset field, that can mean
 hundreds of sites. The current dependency-free Voronoi builder clips every cell
 against every other site, so very high site counts can become slow and visually noisy.
 
@@ -116,10 +136,10 @@ Example:
 ```
 
 For a tighter map, use spacing near twice the requested clearance. For example,
-with `120 mm` clearance:
+with `100 mm` clearance:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\render_voronoi_png.py --mode grid --grid-spacing-x 240 --grid-spacing-y 240
+.\.venv\Scripts\python.exe scripts\render_voronoi_png.py --mode grid --grid-spacing-x 200 --grid-spacing-y 200
 ```
 
 That is the tight version, but it can produce a lot of sites.
@@ -224,12 +244,13 @@ voronoi_map = generate_bounded_voronoi_map(
 Use the `WorldMap` helper when planning from live world data:
 
 ```python
+from TeamControl.world.field_config import VORONOI_HORIZON_MS
 from TeamControl.world.map.voronoi_generator import generate_voronoi_map_from_world_map
 
 voronoi_map = generate_voronoi_map_from_world_map(
     world_map,
     now_s=now_s,
-    horizon_ms=250,
+    horizon_ms=VORONOI_HORIZON_MS,
     ignore_robots={(True, controlled_robot_id)},
     placement_mode="density_grid",
     density_percent=60,
@@ -317,10 +338,10 @@ The engine logs generation cost roughly once per second:
 
 The realtime overlay currently uses conservative defaults:
 
-- `density_percent=10`
-- `max_density_nodes=80`
-- `horizon_ms=250`
-- `obstacle_cost_weight=2.0`
+- `density_percent=VORONOI_RENDER_DENSITY_PERCENT`
+- `max_density_nodes=VORONOI_RENDER_MAX_DENSITY_NODES`
+- `horizon_ms=VORONOI_HORIZON_MS`
+- `obstacle_cost_weight=VORONOI_OBSTACLE_COST_WEIGHT`
 
 Those defaults are meant for visualization first. Increase density carefully,
 because this Voronoi builder clips each cell against all sites.
@@ -353,3 +374,22 @@ rendered graph does not visually hide high-cost edges.
 - The dependency-free Voronoi implementation is easy to understand but not optimized for thousands of sites.
 - Graph connectivity can still fail in crowded layouts; callers should handle
   an empty waypoint result as "no safe route found this tick."
+
+## Configuration Risks
+
+- Lowering `SAFE_MARGIN` or `VORONOI_MIN_CLEARANCE_MM` makes the map less
+  conservative. The tests warn if `SAFE_MARGIN` drops below `10 mm`, but that is
+  only a warning; robot contact risk depends on real hardware size and control
+  accuracy.
+- Raising `VORONOI_RENDER_DENSITY_PERCENT` or
+  `VORONOI_RENDER_MAX_DENSITY_NODES` can make Map Debug sluggish because the
+  worker regenerates cell geometry while the UI is open.
+- Raising live planner density can improve route choices, but it increases the
+  cost of Dijkstra fallback ticks. Direct-path and cached-route fast paths are
+  still cheap.
+- If `VORONOI_BOUNDARY_INSET_MM` plus `VORONOI_MIN_CLEARANCE_MM` gets too large
+  relative to the field, the clipped bounds can collapse and map generation will
+  fail.
+- Render defaults and live planner defaults are intentionally separate. Do not
+  assume the debug graph density exactly matches the graph used by a robot on a
+  blocked planning tick.

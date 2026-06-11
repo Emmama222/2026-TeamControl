@@ -12,6 +12,30 @@ src/TeamControl/planner/voronoi_dijkstra.py
 src/TeamControl/robot/voronoi_navigator.py
 ```
 
+## Shared Tunables
+
+Active Voronoi and navigator behaviour tunables live in
+`src/TeamControl/world/field_config.py`. Prefer changing the `VORONOI_*`
+constants there instead of adding local literals in planner, renderer, or robot
+modules.
+
+Important groups:
+
+- map/planner defaults: `VORONOI_HORIZON_MS`,
+  `VORONOI_DENSITY_PERCENT`, `VORONOI_MAX_DENSITY_NODES`,
+  `VORONOI_BOUNDARY_INSET_MM`, `VORONOI_OBSTACLE_COST_WEIGHT`
+- endpoint and steal approach: `VORONOI_ENDPOINT_REACH_MM`
+- start-inside-obstacle escape: `VORONOI_ESCAPE_MARGIN_MM`,
+  `VORONOI_MIN_ESCAPE_STEP_MM`
+- navigator behaviour: `VORONOI_WAYPOINT_REACHED_MM`,
+  `VORONOI_TARGET_STOP_MM`, `VORONOI_FIELD_TARGET_MARGIN_MM`,
+  `VORONOI_POSSESSION_*`, `VORONOI_STEAL_FRONT_*`, and precision speed/ramp
+  constants
+
+The UI/debug Voronoi overlay intentionally has separate render defaults:
+`VORONOI_RENDER_DENSITY_PERCENT` and `VORONOI_RENDER_MAX_DENSITY_NODES`. These
+are lower than live planner defaults so the map-debug worker stays responsive.
+
 ## Current Entry Point
 
 Use the public facade in `src/TeamControl/planner/` for robot behaviours and
@@ -168,7 +192,57 @@ returns one short waypoint pointing outward from those obstacles. Once the robot
 has moved out of the containing clearance, later ticks return to the usual
 direct-path, cached-route, or Dijkstra behavior.
 
-## Rule 2b: Reuse Existing Path When Valid
+The escape step is intentionally conservative and tunable through
+`VORONOI_ESCAPE_MARGIN_MM` and `VORONOI_MIN_ESCAPE_STEP_MM`. If these are too
+small, the robot may remain inside clearance for multiple ticks and repeatedly
+request escape waypoints. If they are too large, the robot can take a jerky
+first step away from the ball or desired route.
+
+## Rule 2b: Endpoint Inside Clearance
+
+The final target may be inside another robot's safety clearance, especially when
+the target is the ball and the ball is possessed. Treating that as a hard
+blocked target makes the chaser stop just when it should press.
+
+Before direct-path and Dijkstra decisions, `VoronoiWaypointManager` resolves the
+endpoint against nearby obstacles:
+
+1. Clamp the requested target to the field.
+2. Check whether the target is inside an obstacle envelope using
+   `VORONOI_ENDPOINT_REACH_MM` rather than the moving robot's full body
+   clearance.
+3. If contained, offset the endpoint along the obstacle-to-target direction to
+   the close-reach circle.
+4. Mark the output with:
+   - `endpoint_was_adjusted=True`
+   - `endpoint_precision_mode=True`
+
+`endpoint_precision_mode` is a control hint, not a claim that the whole robot
+body has normal clearance. The navigator uses it to keep approaching slowly with
+precision speed and a tighter stop distance. This is what lets a robot keep
+pressing a possessed ball instead of giving up.
+
+Use `PlannerAPI.check_target_clearance()` when a caller needs to classify a
+target before planning. It reports both:
+
+- `in_safety_clearance`: target lies inside normal safety clearance
+- `in_reach_clearance`: target lies inside the tighter close-reach envelope
+
+### Endpoint Edge Cases To Watch
+
+- If `VORONOI_ENDPOINT_REACH_MM` is too small, the robot may press too deeply
+  into another robot and cause contact.
+- If it is too large, the robot may stop too far from the ball and fail to
+  steal.
+- If an adjusted endpoint is clamped by the field boundary and still lies in a
+  clearance zone, precision mode remains enabled. The robot should creep in,
+  but route generation may still return no waypoints.
+- Tuple obstacles and `PlanningObstacle` objects can represent already-inflated
+  radii. Real `Obstacle` objects expose both physical radius and safe radius.
+  The clearance API separates safety clearance from close-reach clearance, but
+  tests should use the obstacle type that matches the scenario being modeled.
+
+## Rule 2c: Reuse Existing Path When Valid
 
 If the direct path is not free, the planner may reuse a previous planned path
 instead of rebuilding from scratch.
@@ -256,11 +330,12 @@ The Skill Intent Executor can use the task-PDF shaped adapter:
 
 ```python
 from TeamControl.planner import PlannerAPI, PlannerInput
+from TeamControl.world.field_config import VORONOI_HORIZON_MS
 
 planner = PlannerAPI()
 obstacles = wm.get_planning_obstacles(
     now_s=now_s,
-    horizon_ms=250,
+    horizon_ms=VORONOI_HORIZON_MS,
     ignore_robots=((is_yellow, robot_id),),
 )
 
@@ -291,7 +366,7 @@ obstacles first:
 ```python
 planning_obstacles = wm.get_planning_obstacles(
     now_s=now_s,
-    horizon_ms=250,
+    horizon_ms=VORONOI_HORIZON_MS,
     ignore_robots=((is_yellow, robot_id),),
 )
 ```
@@ -309,8 +384,8 @@ An obstacle can be ignored at the ball target only when it is the specific robot
 that possesses the ball. Possession is defined as:
 
 ```text
-distance(robot, ball) < 90 mm
-abs(angle_to_ball_in_robot_frame) <= 0.015 rad
+distance(robot, ball) < VORONOI_POSSESSION_DIST_MM
+abs(angle_to_ball_in_robot_frame) <= VORONOI_POSSESSION_ANGLE_RAD
 ball is in front of the robot
 ```
 
