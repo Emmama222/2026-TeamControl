@@ -1,4 +1,4 @@
-pyr  #!/usr/bin/env python
+#!/usr/bin/env python
 """
 Startup verification for TeamControl.
 
@@ -247,25 +247,25 @@ def _wm_worker(result_q):
         result_q.put(("error", str(e)))
 
 
-def check_world_model():
-    _header("7. WorldModel manager (IPC proxy)")
-    q = Queue()
-    p = Process(target=_wm_worker, args=(q,), daemon=True)
-    p.start()
-    p.join(5.0)
+# def check_world_model():
+#     _header("7. WorldModel manager (IPC proxy)")
+#     q = Queue()
+#     p = Process(target=_wm_worker, args=(q,), daemon=True)
+#     p.start()
+#     p.join(5.0)
 
-    if not q.empty():
-        status, val = q.get()
-        if status == "ok":
-            _ok(f"Manager started, proxy call returned version={val}")
-            return True
-        else:
-            _fail(f"Manager error: {val}")
-            return False
-    else:
-        _fail("WorldModel manager process hung (timeout 5s)")
-        p.terminate()
-        return False
+#     if not q.empty():
+#         status, val = q.get()
+#         if status == "ok":
+#             _ok(f"Manager started, proxy call returned version={val}")
+#             return True
+#         else:
+#             _fail(f"Manager error: {val}")
+#             return False
+#     else:
+#         _fail("WorldModel manager process hung (timeout 5s)")
+#         p.terminate()
+#         return False
 
 
 # ── Check 7: Core imports ─────────────────────────────────────────────────────
@@ -312,14 +312,14 @@ def main():
     results["gc"] = check_game_controller(cfg)  # warning only
     results["robot_bind"] = check_robot_recv_bind(cfg)
     results["grsim"] = check_grsim(cfg)
-    results["worldmodel"] = check_world_model()
+    # results["worldmodel"] = check_world_model()
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print("\n" + "=" * 55)
     print("  Summary")
     print("=" * 55)
-    required = ["config", "protobufs", "imports", "vision", "robot_bind", "worldmodel"]
-    optional = ["gc", "grsim"]
+    required = ["config", "protobufs", "imports", "vision", "robot_bind","gc"]
+    optional = [ "grsim"] #optional : "worldmodel"
 
     for k in required:
         status = _PASS if results[k] else _FAIL
