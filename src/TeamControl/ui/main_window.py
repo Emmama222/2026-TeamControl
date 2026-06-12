@@ -12,6 +12,7 @@ Tabs:
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QAbstractSpinBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -45,7 +46,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TurtleRabbit — SSL Command Center")
-        self.setMinimumSize(1280, 800)
+        self.setMinimumSize(900, 620)
         self.resize(1800, 1050)
         self.setStyleSheet(QSS)
 
@@ -77,6 +78,8 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         self._tabs.setObjectName("mainTabs")
         self._tabs.setDocumentMode(True)
+        self._tabs.setElideMode(Qt.ElideRight)
+        self._tabs.tabBar().setUsesScrollButtons(True)
 
         # Dashboard is the top-level Home tab; Calibration has its own main tab.
         self._tabs.addTab(self._dashboard, "  Home  ")
@@ -145,20 +148,24 @@ class MainWindow(QMainWindow):
         tb.addWidget(self._mode_combo)
         tb.addSeparator()
 
-        tb.addWidget(QLabel("  Our Bot: "))
+        tb.addWidget(QLabel("  Our ID: "))
         self._our_id_spin = QSpinBox()
         self._our_id_spin.setRange(0, 15)
         self._our_id_spin.setValue(0)
         self._our_id_spin.setToolTip("Shell ID of our robot (from ipconfig.yaml)")
-        self._our_id_spin.setFixedWidth(55)
+        self._our_id_spin.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self._our_id_spin.setAlignment(Qt.AlignCenter)
+        self._our_id_spin.setFixedWidth(44)
         tb.addWidget(self._our_id_spin)
 
-        tb.addWidget(QLabel("  Opp Bot: "))
+        tb.addWidget(QLabel("  Opp ID: "))
         self._opp_id_spin = QSpinBox()
         self._opp_id_spin.setRange(0, 15)
         self._opp_id_spin.setValue(0)
         self._opp_id_spin.setToolTip("Shell ID of opponent robot")
-        self._opp_id_spin.setFixedWidth(55)
+        self._opp_id_spin.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self._opp_id_spin.setAlignment(Qt.AlignCenter)
+        self._opp_id_spin.setFixedWidth(44)
         tb.addWidget(self._opp_id_spin)
         tb.addSeparator()
 

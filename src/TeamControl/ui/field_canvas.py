@@ -12,7 +12,7 @@ Features:
 
 import math
 import time
-from PySide6.QtWidgets import QWidget, QToolTip, QMenu
+from PySide6.QtWidgets import QWidget, QToolTip, QMenu, QSizePolicy
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal, QSize
 from PySide6.QtGui import (QPainter, QPen, QBrush, QColor, QFont,
                            QPainterPath, QTransform, QWheelEvent,
@@ -51,7 +51,8 @@ class FieldCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(600, 400)
+        self.setMinimumSize(320, 240)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
 
         # Data
@@ -274,14 +275,22 @@ class FieldCanvas(QWidget):
                        QPointF(ax + math.cos(a2) * head,
                                ay + math.sin(a2) * head))
 
-            # ID label
-            p.setPen(QPen(QColor("#000000"), 1))
-            font = QFont("Segoe UI", 1)
-            font.setPixelSize(80)
-            font.setBold(True)
-            p.setFont(font)
-            text_rect = QRectF(cx - 50, cy - 50, 100, 100)
-            p.drawText(text_rect, Qt.AlignCenter, str(r.id))
+            self._draw_robot_id_label(p, QPointF(cx, cy), str(r.id))
+
+    def _draw_robot_id_label(self, p: QPainter, center: QPointF, text: str):
+        """Draw robot IDs in screen pixels so labels stay readable at any zoom."""
+        screen_center = p.transform().map(center)
+        p.save()
+        p.resetTransform()
+        font = QFont("Segoe UI", 12, QFont.Bold)
+        p.setFont(font)
+        rect = QRectF(screen_center.x() - 14, screen_center.y() - 12, 28, 24)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 145))
+        p.drawRoundedRect(rect.adjusted(1, 2, -1, -2), 4, 4)
+        p.setPen(QPen(QColor("#ffffff"), 1))
+        p.drawText(rect, Qt.AlignCenter, text)
+        p.restore()
 
     def _draw_robot_body(self, p: QPainter, cx, cy, theta, color: QColor):
         """Draw the SSL robot footprint: circular rear with a flat kicker front."""

@@ -5,6 +5,7 @@ Simulation controls for grSim ball/robot placement and runtime channels.
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
     QPushButton, QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox,
+    QSizePolicy,
 )
 from PySide6.QtCore import Signal
 
@@ -21,6 +22,8 @@ class SimPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setMinimumSize(360, 560)
+        self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Minimum)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(8)
@@ -30,7 +33,9 @@ class SimPanel(QWidget):
         lay.addWidget(title)
 
         ball_box = QGroupBox("Ball Placement")
+        ball_box.setMinimumHeight(126)
         bg = QGridLayout(ball_box)
+        self._configure_form_grid(bg)
         self._ball_x = self._make_spin(-5000, 5000, 0)
         self._ball_y = self._make_spin(-3000, 3000, 0)
         self._ball_vx = self._make_spin(-10000, 10000, 0)
@@ -45,11 +50,14 @@ class SimPanel(QWidget):
         bg.addWidget(self._ball_vy, 1, 3)
         btn_row = QHBoxLayout()
         place_ball = QPushButton("Place Ball")
+        place_ball.setMinimumHeight(28)
         place_ball.clicked.connect(self._on_place_ball)
         click_ball = QPushButton("Click on Field")
+        click_ball.setMinimumHeight(28)
         click_ball.setStyleSheet(f"color:{ACCENT}; font-weight:bold;")
         click_ball.clicked.connect(self.field_place_ball.emit)
         center_ball = QPushButton("Center")
+        center_ball.setMinimumHeight(28)
         center_ball.clicked.connect(self._center_ball)
         btn_row.addWidget(place_ball)
         btn_row.addWidget(click_ball)
@@ -58,11 +66,15 @@ class SimPanel(QWidget):
         lay.addWidget(ball_box)
 
         robot_box = QGroupBox("Robot Placement")
+        robot_box.setMinimumHeight(146)
         rg = QGridLayout(robot_box)
+        self._configure_form_grid(rg)
         self._robot_team = QComboBox()
+        self._robot_team.setMinimumWidth(96)
         self._robot_team.addItems(["Yellow", "Blue"])
         self._robot_id = QSpinBox()
         self._robot_id.setRange(0, 15)
+        self._robot_id.setMinimumWidth(96)
         self._robot_x = self._make_spin(-5000, 5000, 0)
         self._robot_y = self._make_spin(-3000, 3000, 0)
         self._robot_o = self._make_spin(-180, 180, 0, suffix=" deg")
@@ -78,8 +90,10 @@ class SimPanel(QWidget):
         rg.addWidget(self._robot_o, 2, 1)
         rbtn = QHBoxLayout()
         place_robot = QPushButton("Place Robot")
+        place_robot.setMinimumHeight(28)
         place_robot.clicked.connect(self._on_place_robot)
         click_robot = QPushButton("Click on Field")
+        click_robot.setMinimumHeight(28)
         click_robot.setStyleSheet(f"color:{ACCENT}; font-weight:bold;")
         click_robot.clicked.connect(self._on_click_place_robot)
         rbtn.addWidget(place_robot)
@@ -88,10 +102,13 @@ class SimPanel(QWidget):
         lay.addWidget(robot_box)
 
         qa = QGroupBox("Quick Actions")
+        qa.setMinimumHeight(116)
         ql = QVBoxLayout(qa)
         reset_btn = QPushButton("Reset Ball to Center")
+        reset_btn.setMinimumHeight(28)
         reset_btn.clicked.connect(self._center_ball)
         kickoff_btn = QPushButton("Kickoff Formation")
+        kickoff_btn.setMinimumHeight(28)
         kickoff_btn.setToolTip("Place all robots in kickoff positions")
         kickoff_btn.clicked.connect(self._kickoff_formation)
         ql.addWidget(reset_btn)
@@ -99,6 +116,7 @@ class SimPanel(QWidget):
         lay.addWidget(qa)
 
         chan_box = QGroupBox("Runtime Channels")
+        chan_box.setMinimumHeight(188)
         cg = QVBoxLayout(chan_box)
         self._channel_checks = {
             "vision": QCheckBox("Vision"),
@@ -110,6 +128,7 @@ class SimPanel(QWidget):
         }
         for key, cb in self._channel_checks.items():
             cb.setChecked(key != "record_wm")
+            cb.setMinimumHeight(24)
             cg.addWidget(cb)
         lay.addWidget(chan_box)
         lay.addStretch()
@@ -147,9 +166,22 @@ class SimPanel(QWidget):
         spin.setValue(val)
         spin.setDecimals(1)
         spin.setSingleStep(100)
+        spin.setMinimumWidth(96)
+        spin.setMinimumHeight(24)
         if suffix:
             spin.setSuffix(suffix)
         return spin
+
+    @staticmethod
+    def _configure_form_grid(grid: QGridLayout):
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.setColumnMinimumWidth(0, 58)
+        grid.setColumnMinimumWidth(1, 96)
+        grid.setColumnMinimumWidth(2, 52)
+        grid.setColumnMinimumWidth(3, 96)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
 
     def _on_place_ball(self):
         self.place_ball_requested.emit(

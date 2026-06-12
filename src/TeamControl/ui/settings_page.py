@@ -4,7 +4,7 @@ details into one unified settings/tools page.
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTabWidget,
+    QWidget, QHBoxLayout, QSplitter, QTabWidget, QScrollArea, QFrame,
 )
 from PySide6.QtCore import Qt
 
@@ -27,7 +27,7 @@ class SettingsPage(QWidget):
         left_tabs = QTabWidget()
         self.sim_panel = SimPanel()
         self.network_panel = NetworkPanel()
-        left_tabs.addTab(self.sim_panel, "Simulation")
+        left_tabs.addTab(_scrollable(self.sim_panel), "Simulation")
         left_tabs.addTab(self.network_panel, "Network")
         splitter.addWidget(left_tabs)
 
@@ -54,3 +54,11 @@ class SettingsPage(QWidget):
 
     def set_channel_controls_enabled(self, enabled: bool):
         self.sim_panel.set_engine_running(not enabled)
+
+
+def _scrollable(widget: QWidget) -> QScrollArea:
+    scroll = QScrollArea()
+    scroll.setWidget(widget)
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    return scroll

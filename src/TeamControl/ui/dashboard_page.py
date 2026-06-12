@@ -63,12 +63,14 @@ class DashboardPage(QWidget):
 
         # ── Right sidebar: read-only runtime monitor ──────────────
         monitor = self._build_monitor_panel()
-        monitor.setMinimumWidth(320)
-        monitor.setMaximumWidth(520)
+        monitor.setMinimumWidth(260)
+        monitor.setMaximumWidth(480)
         splitter.addWidget(monitor)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([1100, 420])
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
+        splitter.setSizes([900, 340])
 
         root.addWidget(splitter)
 
@@ -199,10 +201,12 @@ class DashboardPage(QWidget):
         self._robot_table.setAlternatingRowColors(True)
         self._robot_table.verticalHeader().setVisible(False)
         self._robot_table.setShowGrid(False)
-        self._robot_table.setMinimumHeight(200)
-        self._robot_table.setMaximumHeight(360)
+        self._robot_table.setMinimumHeight(150)
+        self._robot_table.setMaximumHeight(300)
         hh = self._robot_table.horizontalHeader()
-        hh.setSectionResizeMode(QHeaderView.Stretch)
+        hh.setSectionResizeMode(QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.Stretch)
         hh.setMinimumSectionSize(40)
         self._robot_table.verticalHeader().setDefaultSectionSize(32)
         lay.addWidget(self._robot_table)
