@@ -16,7 +16,7 @@ _TUNING_PATH = os.path.normpath(_TUNING_PATH)
 
 def _load_tuning():
     defaults = {
-        "max_speed": 5.0,
+        "max_speed": 5.0, # testing recommend 1.0, want fast in test irl 3.0
         "max_w_raw": 0.5,
         "w_clamp_pct": 0.60,
         "manual_max_w": 10.0,
