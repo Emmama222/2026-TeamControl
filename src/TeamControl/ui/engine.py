@@ -68,6 +68,7 @@ class SimEngine(QObject):
         "coop",
         "6v6",
     ]
+    COMPETITION_MODES = {"6v6"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -158,6 +159,19 @@ class SimEngine(QObject):
             return True
         except Exception:
             return False
+
+    def dashboard_action_block_reason(self) -> str | None:
+        """Return why field-click dashboard actions are disabled, if blocked."""
+        if not self._running:
+            return "engine is not running"
+        if self._mode in self.COMPETITION_MODES:
+            return f"competition mode is active ({self._mode})"
+        if not self._channel_options.get("send_grsim", False):
+            return "Send Commands to grSim is off"
+        return None
+
+    def dashboard_actions_allowed(self) -> bool:
+        return self.dashboard_action_block_reason() is None
 
     def set_map_render_enabled(self, enabled: bool):
         """Enable the optional debug-map stream while its tab is visible."""
@@ -678,20 +692,36 @@ class SimEngine(QObject):
     # ── Simulation controls ───────────────────────────────────────
 
     def place_ball(self, x_mm, y_mm, vx=0.0, vy=0.0):
+        blocked = self.dashboard_action_block_reason()
+        if blocked:
+            self.log_message.emit(f"[dashboard] Ball placement blocked: {blocked}")
+            return False
         if not self._grsim_sender:
-            return
+            self.log_message.emit(
+                "[dashboard] Ball placement blocked: grSim sender unavailable"
+            )
+            return False
         try:
             pkt = grSimPacketFactory.ball_replacement_command(
                 x=x_mm / 1000.0, y=y_mm / 1000.0,
                 vx=vx / 1000.0, vy=vy / 1000.0)
             self._grsim_sender.send_packet(pkt)
             self.log_message.emit(f"[sim] Ball placed at ({x_mm:.0f}, {y_mm:.0f})")
+            return True
         except Exception as e:
             self.log_message.emit(f"[sim] Ball placement failed: {e}")
+            return False
 
     def place_robot(self, robot_id, is_yellow, x_mm, y_mm, orientation=0.0):
+        blocked = self.dashboard_action_block_reason()
+        if blocked:
+            self.log_message.emit(f"[dashboard] Robot placement blocked: {blocked}")
+            return False
         if not self._grsim_sender:
-            return
+            self.log_message.emit(
+                "[dashboard] Robot placement blocked: grSim sender unavailable"
+            )
+            return False
         try:
             pkt = grSimPacketFactory.robot_replacement_command(
                 x=x_mm / 1000.0, y=y_mm / 1000.0,
@@ -701,8 +731,10 @@ class SimEngine(QObject):
             team = "Yellow" if is_yellow else "Blue"
             self.log_message.emit(
                 f"[sim] {team} #{robot_id} placed at ({x_mm:.0f}, {y_mm:.0f})")
+            return True
         except Exception as e:
             self.log_message.emit(f"[sim] Robot placement failed: {e}")
+            return False
 
 
 def _positive_float(value):

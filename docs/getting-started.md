@@ -90,6 +90,13 @@ Basic flow:
 5. Check and Update `grSim Vision Port` and change to `10006` for ease of access
 5. Run `python ui_main.py`.
 
+Dashboard field controls such as placing the ball, placing robots, selecting a
+robot from the field, `Go to Ball`, and `Go to Ball & Kick` are guarded for
+simulation use. They require the UI engine to be running, a non-`6v6` mode, and
+`Send Commands to grSim` enabled. When placing the ball from the field, the
+dashboard draws an orange `X` at the requested point so you can compare the
+commanded location with the vision-reported ball.
+
 ## Troubleshooting
 Common checks:
 - Is the virtual environment active?

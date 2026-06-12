@@ -11,7 +11,7 @@ import time
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QGridLayout, QFrame, QScrollArea,
+    QGridLayout, QFrame, QScrollArea, QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
@@ -45,12 +45,14 @@ class DashboardPage(QWidget):
     """Field canvas + tabbed right sidebar."""
 
     coordinate_hover = Signal(float, float)
+    _DASHBOARD_HIDDEN_MAP_LAYERS = {"Robots", "Ball"}
 
     def __init__(self, field_canvas, parent=None, engine=None,
                  test_panel=None):
         super().__init__(parent)
         self._field = field_canvas
         self._engine = engine
+        self._map_layer_checks: dict[str, QCheckBox] = {}
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -71,6 +73,8 @@ class DashboardPage(QWidget):
         root.addWidget(splitter)
 
         self._field.coordinate_hover.connect(self.coordinate_hover.emit)
+        if hasattr(self._field, "layers_changed"):
+            self._field.layers_changed.connect(self._sync_map_layer_controls)
 
         self._frame_times: list[float] = []
         self._current_mode = "vision_only"
@@ -92,6 +96,7 @@ class DashboardPage(QWidget):
         inner_lay.setSpacing(8)
 
         self._build_channels_card(inner_lay)
+        self._build_map_layers_card(inner_lay)
         self._build_robot_card(inner_lay)
         self._build_game_card(inner_lay)
         inner_lay.addStretch()
@@ -397,3 +402,50 @@ class DashboardPage(QWidget):
         self._frame_times.append(now)
         self._frame_times = [t for t in self._frame_times if t > now - 1.0]
         self._fps_lbl.setText(f"{len(self._frame_times)} fps")
+
+    # ── Map layer controls ───────────────────────────────────────
+
+    def _build_map_layers_card(self, parent_lay):
+        card, lay = _card("Map Layers")
+        self._map_layer_hint = QLabel("Waiting for map data...")
+        self._map_layer_hint.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+        lay.addWidget(self._map_layer_hint)
+
+        self._map_layer_lay = QVBoxLayout()
+        self._map_layer_lay.setContentsMargins(0, 0, 0, 0)
+        self._map_layer_lay.setSpacing(2)
+        lay.addLayout(self._map_layer_lay)
+        parent_lay.addWidget(card)
+
+    def set_render_data(self, render_data):
+        if hasattr(self._field, "set_render_data"):
+            self._field.set_render_data(render_data)
+
+    def _sync_map_layer_controls(self, layers):
+        active_names = {layer.name for layer in layers}
+        self._map_layer_hint.setVisible(not bool(active_names))
+
+        for layer in layers:
+            if layer.name in self._map_layer_checks:
+                continue
+
+            visible = self._field.is_layer_visible(layer.name)
+            if layer.name in self._DASHBOARD_HIDDEN_MAP_LAYERS:
+                visible = False
+                self._field.set_layer_visible(layer.name, False)
+
+            check = QCheckBox(layer.name)
+            check.setChecked(visible)
+            check.toggled.connect(
+                lambda checked, name=layer.name: self._field.set_layer_visible(
+                    name, checked
+                )
+            )
+            self._map_layer_lay.addWidget(check)
+            self._map_layer_checks[layer.name] = check
+
+        for name, check in tuple(self._map_layer_checks.items()):
+            if name not in active_names:
+                self._map_layer_lay.removeWidget(check)
+                check.deleteLater()
+                del self._map_layer_checks[name]

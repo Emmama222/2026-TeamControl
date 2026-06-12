@@ -11,6 +11,7 @@ Features:
 """
 
 import math
+import time
 from PySide6.QtWidgets import QWidget, QToolTip, QMenu
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal, QSize
 from PySide6.QtGui import (QPainter, QPen, QBrush, QColor, QFont,
@@ -31,6 +32,10 @@ from TeamControl.robot.constants import (
     GOAL_WIDTH as DEFAULT_GOAL_WIDTH,
     ROBOT_RADIUS,
     FIELD_MARGIN as DEFAULT_MARGIN,
+)
+from TeamControl.world.field_config import (
+    DASHBOARD_BALL_PLACE_CONFIRM_SECONDS,
+    DASHBOARD_BALL_PLACE_CONFIRM_TOLERANCE_MM,
 )
 
 
@@ -54,6 +59,8 @@ class FieldCanvas(QWidget):
         self._blue: list = []
         self._ball = None
         self._targets: list[tuple] = []
+        self._ball_place_marker: tuple[float, float] | None = None
+        self._ball_place_marker_seen_since_s: float | None = None
         self._paths: list[list[tuple]] = []
         self._frame_number = 0
         self._field_geometry = None
@@ -75,11 +82,20 @@ class FieldCanvas(QWidget):
         self._blue = [r for r in snap.blue if r is not None]
         self._ball = snap.ball
         self._frame_number = snap.frame_number
+        self._update_ball_place_marker_confirmation()
         self.update()
 
 
     def set_targets(self, targets):
         self._targets = list(targets)
+        self.update()
+
+    def set_ball_place_marker(self, x_mm: float | None, y_mm: float | None = None):
+        if x_mm is None or y_mm is None:
+            self._ball_place_marker = None
+        else:
+            self._ball_place_marker = (float(x_mm), float(y_mm))
+        self._ball_place_marker_seen_since_s = None
         self.update()
 
     def set_paths(self, paths):
@@ -295,26 +311,53 @@ class FieldCanvas(QWidget):
         p.setBrush(QBrush(QColor(BALL_COLOR)))
         p.drawEllipse(QPointF(bx, by), 45, 45)
 
+    def _update_ball_place_marker_confirmation(self):
+        if self._ball_place_marker is None:
+            self._ball_place_marker_seen_since_s = None
+            return
+        if not self._ball:
+            self._ball_place_marker_seen_since_s = None
+            return
+
+        tx, ty = self._ball_place_marker
+        dist = math.hypot(float(self._ball.x) - tx, float(self._ball.y) - ty)
+        if dist > DASHBOARD_BALL_PLACE_CONFIRM_TOLERANCE_MM:
+            self._ball_place_marker_seen_since_s = None
+            return
+
+        now_s = time.monotonic()
+        if self._ball_place_marker_seen_since_s is None:
+            self._ball_place_marker_seen_since_s = now_s
+            return
+        if now_s - self._ball_place_marker_seen_since_s >= (
+            DASHBOARD_BALL_PLACE_CONFIRM_SECONDS
+        ):
+            self._ball_place_marker = None
+            self._ball_place_marker_seen_since_s = None
+
     def _draw_overlays(self, p: QPainter):
         """Draw optional subclasses' field-space overlays."""
         return
 
     def _draw_targets(self, p: QPainter):
-        if not self._targets:
-            return
+        if self._ball_place_marker is not None:
+            tx, ty = self._ball_place_marker
+            self._draw_target_x(p, tx, ty, BALL_COLOR, size=85, width=18)
         for item in self._targets:
             if len(item) == 3:
                 tx, ty, color_hex = item
             else:
                 tx, ty = item
                 color_hex = ACCENT
-            p.setPen(QPen(QColor(color_hex), 16))
-            p.setBrush(Qt.NoBrush)
-            size = 60
-            p.drawLine(QPointF(tx - size, ty - size),
-                       QPointF(tx + size, ty + size))
-            p.drawLine(QPointF(tx - size, ty + size),
-                       QPointF(tx + size, ty - size))
+            self._draw_target_x(p, tx, ty, color_hex)
+
+    def _draw_target_x(self, p: QPainter, tx, ty, color_hex, size=60, width=16):
+        p.setPen(QPen(QColor(color_hex), width))
+        p.setBrush(Qt.NoBrush)
+        p.drawLine(QPointF(tx - size, ty - size),
+                   QPointF(tx + size, ty + size))
+        p.drawLine(QPointF(tx - size, ty + size),
+                   QPointF(tx + size, ty - size))
 
     def _draw_paths(self, p: QPainter):
         for path_entry in self._paths:

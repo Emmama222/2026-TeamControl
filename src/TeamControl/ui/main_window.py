@@ -30,9 +30,8 @@ from TeamControl.ui.calibration_page import CalibrationPage
 from TeamControl.ui.dashboard_page import DashboardPage
 from TeamControl.ui.dispatcher_panel import DispatcherPanel
 from TeamControl.ui.engine import SimEngine
-from TeamControl.ui.field_canvas import FieldCanvas
 from TeamControl.ui.log_panel import LogPanel
-from TeamControl.ui.map_canvas import MapDebugWidget
+from TeamControl.ui.map_canvas import MapCanvas, MapDebugWidget
 from TeamControl.ui.onboard_possession_panel import OnboardPossessionPanel
 from TeamControl.ui.pd_calibration_page import PDCalibrationPage
 from TeamControl.ui.settings_page import SettingsPage
@@ -54,7 +53,7 @@ class MainWindow(QMainWindow):
         self._engine = SimEngine(self)
 
         # ── Shared field canvas ──────────────────────────────────
-        self._field = FieldCanvas()
+        self._field = MapCanvas()
 
         # ── Pages ─────────────────────────────────────────────────
         self._test_panel = TestPanel(engine=self._engine, field=self._field)
@@ -232,7 +231,7 @@ class MainWindow(QMainWindow):
         )
 
         sim_menu = mb.addMenu("Simulation")
-        sim_menu.addAction("Center Ball", lambda: self._engine.place_ball(0, 0))
+        sim_menu.addAction("Center Ball", lambda: self._place_ball_from_dashboard(0, 0))
         sim_menu.addAction(
             "Kickoff Formation", self._settings.sim_panel._kickoff_formation
         )
@@ -264,6 +263,7 @@ class MainWindow(QMainWindow):
 
         eng.frame_ready.connect(self._on_frame)
         eng.map_render_ready.connect(self._map_debug.set_render_data)
+        eng.map_render_ready.connect(self._dashboard.set_render_data)
         eng.field_geometry_ready.connect(self._field.set_field_geometry)
         eng.field_geometry_ready.connect(self._map_debug.set_field_geometry)
         eng.field_geometry_ready.connect(self._calibration.set_field_geometry)
@@ -277,24 +277,18 @@ class MainWindow(QMainWindow):
         self._dashboard.coordinate_hover.connect(self._on_coord_hover)
 
         sp = self._settings.sim_panel
-        sp.place_ball_requested.connect(
-            lambda x, y, vx, vy: eng.place_ball(x, y, vx, vy)
-        )
-        sp.place_robot_requested.connect(
-            lambda rid, yl, x, y, o: eng.place_robot(rid, yl, x, y, o)
-        )
-        sp.field_place_ball.connect(lambda: self._field.set_place_mode("ball"))
+        sp.place_ball_requested.connect(self._place_ball_from_dashboard)
+        sp.place_robot_requested.connect(self._place_robot_from_dashboard)
+        sp.field_place_ball.connect(self._begin_field_ball_placement)
         sp.field_place_robot.connect(
-            lambda rid, yl: self._field.set_place_mode(("robot", rid, yl))
+            self._begin_field_robot_placement
         )
 
-        self._field.ball_placed.connect(lambda x, y: eng.place_ball(x, y))
-        self._field.robot_placed.connect(
-            lambda rid, yl, x, y: eng.place_robot(rid, yl, x, y)
-        )
-        self._field.point_picked.connect(self._test_panel.go_to_point)
-        self._field.action_requested.connect(self._test_panel.field_action)
-        self._field.robot_selected.connect(self._test_panel.select_robot)
+        self._field.ball_placed.connect(self._place_ball_from_field)
+        self._field.robot_placed.connect(self._place_robot_from_field)
+        self._field.point_picked.connect(self._go_to_point_from_field)
+        self._field.action_requested.connect(self._field_action_requested)
+        self._field.robot_selected.connect(self._select_robot_from_field)
 
         self._settings.config_panel.config_changed.connect(
             lambda: self._log_panel.append("[config] Configuration saved")
@@ -303,8 +297,62 @@ class MainWindow(QMainWindow):
     # ── Handlers ─────────────────────────────────────────────────
 
     def _on_tab_changed(self, index):
+        active = self._tabs.widget(index)
         self._engine.set_map_render_enabled(
-            self._tabs.widget(index) is self._map_debug
+            active is self._dashboard or active is self._map_debug
+        )
+
+    def _dashboard_block_reason(self, action_name: str) -> str | None:
+        reason = self._engine.dashboard_action_block_reason()
+        if reason:
+            self._log_panel.append(f"[dashboard] {action_name} blocked: {reason}")
+        return reason
+
+    def _begin_field_ball_placement(self):
+        if self._dashboard_block_reason("Place ball"):
+            return
+        self._field.set_place_mode("ball")
+        self._log_panel.append("[dashboard] Click the field to place the ball")
+
+    def _begin_field_robot_placement(self, robot_id: int, is_yellow: bool):
+        if self._dashboard_block_reason("Place robot"):
+            return
+        self._field.set_place_mode(("robot", robot_id, is_yellow))
+        team = "Yellow" if is_yellow else "Blue"
+        self._log_panel.append(
+            f"[dashboard] Click the field to place {team} #{robot_id}"
+        )
+
+    def _place_ball_from_dashboard(self, x_mm, y_mm, vx=0.0, vy=0.0):
+        if self._engine.place_ball(x_mm, y_mm, vx, vy):
+            self._field.set_ball_place_marker(x_mm, y_mm)
+
+    def _place_ball_from_field(self, x_mm, y_mm):
+        self._place_ball_from_dashboard(x_mm, y_mm)
+
+    def _place_robot_from_dashboard(self, robot_id, is_yellow, x_mm, y_mm, orientation):
+        self._engine.place_robot(robot_id, is_yellow, x_mm, y_mm, orientation)
+
+    def _place_robot_from_field(self, robot_id, is_yellow, x_mm, y_mm):
+        self._place_robot_from_dashboard(robot_id, is_yellow, x_mm, y_mm, 0.0)
+
+    def _go_to_point_from_field(self, x_mm, y_mm):
+        if self._dashboard_block_reason("Go to point"):
+            return
+        self._test_panel.go_to_point(x_mm, y_mm)
+
+    def _field_action_requested(self, action_name: str):
+        if action_name != "stop" and self._dashboard_block_reason(action_name):
+            return
+        self._test_panel.field_action(action_name)
+
+    def _select_robot_from_field(self, is_yellow: bool, robot_id: int):
+        if self._dashboard_block_reason("Robot control selection"):
+            return
+        self._test_panel.select_robot(is_yellow, robot_id)
+        team = "Yellow" if is_yellow else "Blue"
+        self._log_panel.append(
+            f"[dashboard] Field control target set to {team} #{robot_id}"
         )
 
     def _on_mode_combo_changed(self, mode):
@@ -356,6 +404,7 @@ class MainWindow(QMainWindow):
         self._dashboard.set_engine_running(True)
         self._settings.set_engine_running(True)
         self._dispatch_panel.set_running(True)
+        self._on_tab_changed(self._tabs.currentIndex())
 
     def _on_engine_stopped(self):
         self._start_btn.setEnabled(True)
