@@ -6,6 +6,10 @@ FIELD_WIDTH_MM = 6000
 DEFENCE_X_MM = 1000
 DEFENCE_Y_MM = 2000
 
+GOAL_WIDTH_MM = 1000          # total opening between the two posts
+GOAL_HALF_WIDTH_MM = 500      # ± Y from field centre
+GOAL_DEPTH_MM = 180           # how far the box extends past the end line
+
 FIELD_X_MIN = -FIELD_LENGTH_MM / 2
 FIELD_X_MAX = FIELD_LENGTH_MM / 2
 FIELD_Y_MIN = -FIELD_WIDTH_MM / 2
@@ -48,7 +52,10 @@ VORONOI_CHASE_SPEED_SCALE = 0.80
 VORONOI_PRECISION_SPEED_SCALE = 0.75
 VORONOI_WAYPOINT_REACHED_MM = 180.0
 VORONOI_TARGET_STOP_MM = 80.0
-VORONOI_FIELD_TARGET_MARGIN_MM = 90.0
+VORONOI_TARGET_OFFSET_MM = VORONOI_TARGET_STOP_MM      # stop this far from the ball in planner-test mode
+VORONOI_OUT_OF_FIELD_SPEED_SCALE = 0.1                 # velocity multiplier when robot is outside field
+VORONOI_BOUNDARY_DECEL_ZONE_MM = 200.0                 # mm inside boundary where speed ramps to zero
+VORONOI_FIELD_TARGET_MARGIN_MM = 150.0
 VORONOI_PRECISION_RAMP_DIST_MM = 260.0
 VORONOI_CHASE_RAMP_DIST_MM = 450.0
 VORONOI_MIN_SPEED = 0.06
