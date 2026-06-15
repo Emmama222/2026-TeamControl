@@ -19,6 +19,7 @@ from TeamControl.world.field_config import (
     VORONOI_BOUNDARY_INSET_MM,
     VORONOI_DENSITY_PERCENT,
     VORONOI_ENDPOINT_REACH_MM,
+    VORONOI_FIELD_TARGET_MARGIN_MM,
     VORONOI_HORIZON_MS,
     VORONOI_MAX_DENSITY_NODES,
     VORONOI_OBSTACLE_COST_WEIGHT,
@@ -128,7 +129,14 @@ class VoronoiWaypointManager:
         start = _pose_xy(planner_input.current_pose)
         requested_target_pose = _pose3(planner_input.target_pose)
         raw_target = _pose_xy(requested_target_pose)
-        target = clamp_to_field(raw_target) if planner_input.stay_in_field else raw_target
+        if planner_input.stay_in_field:
+            m = VORONOI_FIELD_TARGET_MARGIN_MM
+            target = (
+                max(FIELD_X_MIN + m, min(FIELD_X_MAX - m, float(raw_target[0]))),
+                max(FIELD_Y_MIN + m, min(FIELD_Y_MAX - m, float(raw_target[1]))),
+            )
+        else:
+            target = raw_target
         ignore_robots = {robot_key}
         path_map = planner_input.world_map or _ObstaclePathMap(
             planner_input.obstacles,
