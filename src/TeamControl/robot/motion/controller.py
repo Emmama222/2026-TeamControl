@@ -4,6 +4,14 @@ from typing import Optional, Tuple
 
 from TeamControl.robot import constants as C
 from TeamControl.robot.motion.accel import AccelLimiter
+from TeamControl.world.field_config import (
+    FIELD_X_MAX,
+    FIELD_X_MIN,
+    FIELD_Y_MAX,
+    FIELD_Y_MIN,
+    VORONOI_BOUNDARY_DECEL_ZONE_MM,
+    VORONOI_OUT_OF_FIELD_SPEED_SCALE,
+)
 from TeamControl.robot.motion.hardware import (
     apply_hardware_gains,
     apply_min_angular_command,
@@ -238,6 +246,7 @@ class RobotMotionController:
         deadline: float,
         use_pd: bool = True,
         use_hardware: bool = True,
+        field_limit: bool = False,
     ) -> Tuple[float, float]:
         """Drive only. Returns vx, vy in robot frame."""
         target_in_robot_frame = world2robot(current_pos, target_pos)
@@ -267,6 +276,28 @@ class RobotMotionController:
             vx, vy = apply_min_linear_command(vx, vy, self.min_v)
 
         vx, vy = self.linear_accel.limit((vx, vy))
+        if field_limit:
+            rx, ry = float(current_pos[0]), float(current_pos[1])
+            dist_to_boundary = min(
+                rx - FIELD_X_MIN, FIELD_X_MAX - rx,
+                ry - FIELD_Y_MIN, FIELD_Y_MAX - ry,
+            )
+            if dist_to_boundary < 0:
+                # Outside field: slow crawl back in.
+                vx *= VORONOI_OUT_OF_FIELD_SPEED_SCALE
+                vy *= VORONOI_OUT_OF_FIELD_SPEED_SCALE
+            elif dist_to_boundary < VORONOI_BOUNDARY_DECEL_ZONE_MM:
+                # Dynamic braking: cap to the speed from which the robot can
+                # stop before the boundary given LINEAR_AMAX.
+                # v_max = sqrt(2 * a * d)  where d is in metres.
+                v_max = math.sqrt(
+                    2.0 * C.LINEAR_AMAX * max(dist_to_boundary / 1000.0, 0.0)
+                )
+                speed = math.hypot(vx, vy)
+                if speed > v_max and speed > 0.0:
+                    scale = v_max / speed
+                    vx *= scale
+                    vy *= scale
         return vx, vy
 
     def general_motion(
