@@ -96,11 +96,55 @@ mv.is_facing_dir(current_theta, target_theta, threshold_rad=0.1)
 mv.rotational_motion(current_theta, target_theta, deadline)
 
 # Drive only. Returns (vx, vy) in robot frame, m/s.
-mv.translational_motion(current_pos, target_xy, deadline)
+# field_limit=True activates dynamic braking near the field boundary.
+mv.translational_motion(current_pos, target_xy, deadline, field_limit=True)
 
 # Option C: guarded combined movement. Returns (vx, vy, w).
 mv.general_motion(current_pos, target_xy, target_theta, deadline)
 ```
+
+---
+
+## Field-Boundary Enforcement (`field_limit`)
+
+Pass `field_limit=True` to `translational_motion` whenever the robot should
+stay on the field.  The controller applies two stages **after** the accel
+limiter:
+
+### Stage 1 — Dynamic braking (inside field, within decel zone)
+
+When the robot is inside the field but within `VORONOI_BOUNDARY_DECEL_ZONE_MM`
+of any boundary edge, the commanded velocity is capped to the physically safe
+maximum:
+
+```text
+v_max = sqrt(2 × LINEAR_AMAX × dist_to_boundary_m)
+```
+
+This is the speed from which the robot can brake to a stop exactly at the
+boundary using `LINEAR_AMAX` (2.105 m/s²).  The PD controller may compute a
+higher speed; this cap overrides it.
+
+Example speeds at key distances (`LINEAR_AMAX = 2.105 m/s²`):
+
+| Distance to boundary | Dynamic v_max |
+|---|---|
+| 200 mm (zone edge) | 0.92 m/s |
+| 100 mm | 0.65 m/s |
+| 50 mm | 0.46 m/s |
+| 20 mm | 0.29 m/s |
+| 0 mm | 0 m/s |
+
+`VORONOI_BOUNDARY_DECEL_ZONE_MM` (default 200 mm, tunable in `field_config.py`)
+controls how far from the boundary the cap becomes active.  Increase it if the
+robot still overshoots at high speed approaching the boundary.
+
+### Stage 2 — Out-of-field crawl (outside field)
+
+If the robot is already outside the field, velocity is multiplied by
+`VORONOI_OUT_OF_FIELD_SPEED_SCALE` (default 0.1).  This is a safety backstop
+so momentum is killed quickly; the navigator also overrides the movement target
+to the nearest boundary point to actively return the robot.
 
 ---
 
