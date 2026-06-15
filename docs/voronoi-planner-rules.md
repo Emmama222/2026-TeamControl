@@ -118,28 +118,35 @@ Notes:
 
 ## Rule 1: Sanitise Target Into Playable Area
 
-`VoronoiDijkstraPlanner.plan()` clamps the raw target to the field rectangle
-inset by `VORONOI_FIELD_TARGET_MARGIN_MM` before any planning occurs.  Callers
-do not need to sanitise the target themselves — the planner is the single
-enforcement point.
+The margin is applied once in `VoronoiWaypointManager.update()` (the primary
+enforcement point) **before** the `is_path_free` check, so it applies to every
+planning decision — free-path returns, cached-route returns, and Dijkstra runs.
+`VoronoiDijkstraPlanner.plan()` also applies it internally (idempotent when the
+input is already margined).
 
 ```text
 effective_x = clamp(raw_x, FIELD_X_MIN + m, FIELD_X_MAX - m)
 effective_y = clamp(raw_y, FIELD_Y_MIN + m, FIELD_Y_MAX - m)
-where m = VORONOI_FIELD_TARGET_MARGIN_MM  (default 0.0 mm)
+where m = VORONOI_FIELD_TARGET_MARGIN_MM  (see field_config.py)
 ```
 
-Examples with m = 0:
+Examples with m = 150 mm:
 
 ```text
-(5000, 1000)  -> (4500, 1000)
-(1000, 4000)  -> (1000, 3000)
-(5000, 4000)  -> (4500, 3000)
+(5000, 1000)  -> (4350, 1000)
+(1000, 4000)  -> (1000, 2850)
+(4400, 200)   -> (4350, 200)   # already close to boundary
+(1000, 1000)  -> (1000, 1000)  # well inside — unchanged
 ```
 
-Increasing `VORONOI_FIELD_TARGET_MARGIN_MM` keeps targets away from the boundary
-before the graph is consulted.  The same constant also gates the intermediate-node
-validity check in Rule 3.
+`VORONOI_FIELD_TARGET_MARGIN_MM` is tunable in `field_config.py`.  The same
+constant also gates the intermediate-node validity check in Rule 3.
+
+> **Bug fix (applied):** Before this was corrected, the margin was only applied
+> inside Dijkstra.  When the direct path was clear (`is_path_free = True`),
+> `active_target_pose` was the exact field boundary with no inset, and the robot
+> drove all the way to the edge.  The fix moves enforcement to
+> `waypoint_manager.py` so every path return is margined.
 
 ## Rule 2: Always Check Direct Path
 
@@ -307,9 +314,16 @@ class VoronoiDijkstraPlanner:
         now_s: float | None = None,
         ignore_robots: set[tuple[bool, int]] | None = None,
         previous_state: PlannerState | None = None,
+        stay_in_field: bool = True,
     ) -> PlanResult:
         ...
 ```
+
+`stay_in_field=True` (default): applies Rule 1 target clamping and Rule 3
+intermediate-node validation.  Goal-zone crossing checks are always active
+regardless of this flag.  Pass `stay_in_field=False` only when the target is
+intentionally outside the field (e.g. tracking a ball rolling out of bounds)
+and the caller handles field enforcement separately.
 
 `VoronoiDijkstraPlanner` is the low-level graph search. Robot behavior and the
 future Skill Intent Executor should normally call `PlannerAPI` instead:
@@ -458,18 +472,40 @@ testing the planner in isolation.  It intentionally contains no game logic.
 Each tick:
 
 1. Refresh world-model cache.
-2. Use the raw ball position as target (the planner sanitises it via Rule 1).
+2. If ball is not visible (including when outside field bounds — see Field
+   Enforcement below), send stop command.
 3. Call `PlannerAPI.plan()` with no steal-ignore keys and zero clearance.
-4. Move toward `plan.active_target_pose` at `CHASE_SPEED` with a standard
-   deceleration ramp.
-5. Face the ball with a proportional angular controller.
-6. **Field enforcement**: if the robot's own position is outside the field,
-   override the planner waypoint and drive straight back to the nearest boundary
-   point.  This takes priority over all planner output.
-7. **Target offset**: stop translating once within `VORONOI_TARGET_OFFSET_MM`
-   of the ball (default 150 mm).  The robot still rotates to face the ball.
+   The waypoint manager applies Rule 1 (target margin) before returning
+   `active_target_pose`.
+4. Drive toward `active_target_pose` using `RobotMotionController.translational_motion(
+   current_pos, movement_target, deadline, field_limit=True)`.
+   The `field_limit=True` flag enables the dynamic-braking cap inside the
+   controller (see PD Controller — Field Enforcement section).
+5. Face the ball with a proportional angular controller (`ang_ball * TURN_GAIN`).
+6. **Field override**: if the robot is outside the field, `movement_target` is
+   overridden to the nearest boundary clamp point (takes priority over planner output).
+7. **Ball stop**: stop translating once within `VORONOI_TARGET_OFFSET_MM` of
+   the ball.  The robot still rotates to face the ball.
+8. **Face-target stop**: stop translating when within `FACE_TARGET_DIST_MM` and
+   angle error > `FACE_TARGET_ANGLE_RAD` (dribble alignment).
 
-Stripped behaviours (possession, steal, face-target stop, precision approach,
-exponential smoothing, penalty-box guard) are documented in
+Stripped behaviours (possession, steal, precision approach, exponential smoothing,
+penalty-box guard) are documented in
 [voronoi-navigator-stripped.md](voronoi-navigator-stripped.md) for the future
 game navigator.
+
+## Field Enforcement — Layers
+
+All active field-enforcement mechanisms, ordered from earliest to latest in the
+pipeline:
+
+| Layer | What it does | Where |
+|---|---|---|
+| **Ball filter** | Out-of-field ball → `ball_visible = False` → navigator stops | `world_map.py:_is_ball_in_field` (falls back to `FIELD_X/Y_MIN/MAX` when field geometry is not received from vision) |
+| **Obstacle filter** | Out-of-field robots excluded from planning obstacles | `world_map.py:get_planning_obstacles` |
+| **Target margin** | Target clamped to `FIELD_*_MIN/MAX ± VORONOI_FIELD_TARGET_MARGIN_MM` | `waypoint_manager.py` (all cases) + `voronoi_dijkstra.py` (Dijkstra run) |
+| **Node validation** | Dijkstra intermediate nodes outside field or in goal zone → path discarded | `voronoi_dijkstra.py` Rule 3 |
+| **Segment check** | Any path segment crossing the physical goal mouth → path discarded | `voronoi_dijkstra.py` (always active) |
+| **Navigator override** | Robot outside field → movement target overridden to nearest boundary point | `voronoi_navigator.py` |
+| **Dynamic braking** | Within `VORONOI_BOUNDARY_DECEL_ZONE_MM` of boundary → speed capped to `sqrt(2 × LINEAR_AMAX × dist)` | `controller.py:translational_motion(field_limit=True)` |
+| **Out-of-field scale** | Robot outside field → velocity × `VORONOI_OUT_OF_FIELD_SPEED_SCALE` (0.1) | `controller.py:translational_motion(field_limit=True)` |
