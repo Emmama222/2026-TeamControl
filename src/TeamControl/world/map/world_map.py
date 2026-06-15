@@ -231,7 +231,10 @@ class WorldMap:
 
     def _is_ball_in_field(self, position: tuple[float, float]) -> bool:
         if self.field is None:
-            return True
+            return (
+                FIELD_X_MIN <= position[0] <= FIELD_X_MAX
+                and FIELD_Y_MIN <= position[1] <= FIELD_Y_MAX
+            )
         half_length = self.field.field_length / 2.0
         half_width = self.field.field_width / 2.0
         return (
