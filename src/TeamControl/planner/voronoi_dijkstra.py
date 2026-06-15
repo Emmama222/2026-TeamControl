@@ -8,14 +8,8 @@ from math import hypot
 from typing import Iterable
 
 from TeamControl.world.field_config import (
-    DEFENCE_X_MM,
-    DEFENCE_Y_MM,
-    FIELD_X_MAX,
-    FIELD_X_MIN,
-    FIELD_Y_MAX,
-    FIELD_Y_MIN,
-    GOAL_HALF_WIDTH_MM,
     ROBOT_RADIUS_MM,
+    get_live_defence,
     VORONOI_BOUNDARY_INSET_MM,
     VORONOI_CONNECTION_COUNT,
     VORONOI_CONNECTION_RADIUS_MM,
@@ -27,6 +21,7 @@ from TeamControl.world.field_config import (
     VORONOI_MIN_ESCAPE_STEP_MM,
     VORONOI_OBSTACLE_COST_WEIGHT,
     VORONOI_TARGET_DEAD_ZONE_MM,
+    get_live_bounds,
 )
 from TeamControl.world.map.geometry import distance_2_segment
 from TeamControl.world.map.voronoi_generator import (
@@ -110,14 +105,7 @@ class VoronoiDijkstraPlanner:
 
         start = _point2(start_pos_mm)
         raw = _point2(target_pos_mm)
-        if stay_in_field:
-            m = VORONOI_FIELD_TARGET_MARGIN_MM
-            target = (
-                max(FIELD_X_MIN + m, min(FIELD_X_MAX - m, raw[0])),
-                max(FIELD_Y_MIN + m, min(FIELD_Y_MAX - m, raw[1])),
-            )
-        else:
-            target = raw
+        target = clamp_to_field(raw) if stay_in_field else raw
 
         escape_waypoint = self._escape_waypoint_from_containing_obstacles(
             world_map,
@@ -210,7 +198,7 @@ class VoronoiDijkstraPlanner:
 
         # Field-boundary validation only when stay_in_field is set.
         if stay_in_field and any(
-            not is_in_field(wp, margin=-VORONOI_FIELD_TARGET_MARGIN_MM)
+            not is_in_field(wp)
             or is_in_goal_zone(wp)
             for wp in intermediate
         ):
@@ -268,11 +256,13 @@ class VoronoiDijkstraPlanner:
             VORONOI_MIN_ESCAPE_STEP_MM,
             max_overlap + VORONOI_ESCAPE_MARGIN_MM,
         )
-        return clamp_to_field(
-            (
-                start[0] + (push_x / push_len) * step_mm,
-                start[1] + (push_y / push_len) * step_mm,
-            )
+        x_min, x_max, y_min, y_max = get_live_bounds()
+        m = VORONOI_FIELD_TARGET_MARGIN_MM
+        return (
+            max(x_min + m, min(x_max - m,
+                start[0] + (push_x / push_len) * step_mm)),
+            max(y_min + m, min(y_max - m,
+                start[1] + (push_y / push_len) * step_mm)),
         )
 
     def _previous_path_is_valid(
@@ -415,36 +405,37 @@ def is_in_goal_zone(point: Point) -> bool:
     field.  It is physically walled on three sides — no path may pass through it.
     """
     x, y = float(point[0]), float(point[1])
-    if abs(y) > GOAL_HALF_WIDTH_MM:
+    _, _, goal_half_width, _ = get_live_defence()
+    if abs(y) > goal_half_width:
         return False
-    return x > FIELD_X_MAX or x < FIELD_X_MIN
+    x_min, x_max, _, _ = get_live_bounds()
+    return x > x_max or x < x_min
 
 
 def _segment_crosses_goal_zone(p1: Point, p2: Point) -> bool:
-    """Return True if the segment p1→p2 enters either physical goal box.
-
-    Checks whether the segment crosses x = FIELD_X_MAX or x = FIELD_X_MIN
-    at a y-value within the goal mouth (|y| <= GOAL_HALF_WIDTH_MM).
-    """
+    """Return True if the segment p1→p2 enters either physical goal box."""
     x1, y1 = float(p1[0]), float(p1[1])
     x2, y2 = float(p2[0]), float(p2[1])
-    for wall_x in (FIELD_X_MIN, FIELD_X_MAX):
+    _, _, goal_half_width, _ = get_live_defence()
+    x_min, x_max, _, _ = get_live_bounds()
+    for wall_x in (x_min, x_max):
         dx = x2 - x1
         if abs(dx) < 1e-9:
             continue
         t = (wall_x - x1) / dx
         if 0.0 <= t <= 1.0:
             cross_y = y1 + t * (y2 - y1)
-            if abs(cross_y) <= GOAL_HALF_WIDTH_MM:
+            if abs(cross_y) <= goal_half_width:
                 return True
     return False
 
 
 def clamp_to_field(point: Point) -> Point:
     """Clamp a point to the full playable field rectangle."""
+    x_min, x_max, y_min, y_max = get_live_bounds()
     return (
-        max(FIELD_X_MIN, min(FIELD_X_MAX, float(point[0]))),
-        max(FIELD_Y_MIN, min(FIELD_Y_MAX, float(point[1]))),
+        max(x_min, min(x_max, float(point[0]))),
+        max(y_min, min(y_max, float(point[1]))),
     )
 
 
@@ -468,9 +459,15 @@ def is_in_box(
     )
 
 
-def is_in_field(point: Point, margin: float = 0.0) -> bool:
-    """Return True if *point* is inside the full field, inset by *margin* mm."""
-    return is_in_box(point, FIELD_X_MIN, FIELD_X_MAX, FIELD_Y_MIN, FIELD_Y_MAX, margin)
+def is_in_field(point: Point, margin: float = VORONOI_FIELD_TARGET_MARGIN_MM) -> bool:
+    """Return True if *point* is inside the full field, inset by *margin* mm.
+
+    Default margin is VORONOI_FIELD_TARGET_MARGIN_MM so callers checking whether
+    a waypoint is far enough from the boundary can call without arguments.
+    Pass margin=0.0 to test the exact field rectangle.
+    """
+    x_min, x_max, y_min, y_max = get_live_bounds()
+    return is_in_box(point, x_min, x_max, y_min, y_max, margin)
 
 
 def is_in_penalty_box(
@@ -485,13 +482,15 @@ def is_in_penalty_box(
     negative-x goal end.  *margin* insets all four edges (use ROBOT_RADIUS_MM
     to test with a robot-body clearance).
     """
+    defence_x, defence_y, _, _ = get_live_defence()
+    x_min, x_max, _, _ = get_live_bounds()
     if positive_side:
-        x_min = FIELD_X_MAX - DEFENCE_X_MM
-        x_max = FIELD_X_MAX
+        box_x_min = x_max - defence_x
+        box_x_max = x_max
     else:
-        x_min = FIELD_X_MIN
-        x_max = FIELD_X_MIN + DEFENCE_X_MM
-    return is_in_box(point, x_min, x_max, -DEFENCE_Y_MM, DEFENCE_Y_MM, margin)
+        box_x_min = x_min
+        box_x_max = x_min + defence_x
+    return is_in_box(point, box_x_min, box_x_max, -defence_y, defence_y, margin)
 
 
 def _distance(a: Point, b: Point) -> float:

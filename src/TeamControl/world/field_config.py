@@ -54,7 +54,9 @@ VORONOI_WAYPOINT_REACHED_MM = 180.0
 VORONOI_TARGET_STOP_MM = 80.0
 VORONOI_TARGET_OFFSET_MM = VORONOI_TARGET_STOP_MM      # stop this far from the ball in planner-test mode
 VORONOI_OUT_OF_FIELD_SPEED_SCALE = 0.1                 # velocity multiplier when robot is outside field
-VORONOI_BOUNDARY_DECEL_ZONE_MM = 200.0                 # mm inside boundary where speed ramps to zero
+VORONOI_BOUNDARY_DECEL_ZONE_MM = 400.0                 # mm inside boundary where linear ramp begins
+VORONOI_BOUNDARY_NEAR_SPEED_SCALE = 0.10               # speed floor (fraction of MAX_SPEED) at the boundary wall
+VORONOI_BOUNDARY_HARD_STOP_MM = 30.0                   # zero boundary-approaching velocity within this distance
 VORONOI_FIELD_TARGET_MARGIN_MM = 150.0
 VORONOI_PRECISION_RAMP_DIST_MM = 260.0
 VORONOI_CHASE_RAMP_DIST_MM = 450.0
@@ -65,3 +67,76 @@ VORONOI_POSSESSION_DIST_MM = 90.0
 VORONOI_POSSESSION_ANGLE_RAD = 0.015
 VORONOI_STEAL_FRONT_DIST_MM = 650.0
 VORONOI_STEAL_FRONT_ANGLE_RAD = 0.35
+
+# ---------------------------------------------------------------------------
+# Live field bounds
+# Updated when an SSL-Vision geometry packet arrives (via update_live_bounds).
+# Falls back to the hardcoded 9000 × 6000 mm defaults until then.
+# ---------------------------------------------------------------------------
+_live_bounds: tuple[float, float, float, float] = (
+    float(FIELD_X_MIN), float(FIELD_X_MAX),
+    float(FIELD_Y_MIN), float(FIELD_Y_MAX),
+)
+
+
+def get_live_bounds() -> tuple[float, float, float, float]:
+    """Return (x_min, x_max, y_min, y_max) in mm.
+
+    Uses real SSL-Vision field dimensions once geometry has been received;
+    falls back to the 9000 × 6000 mm defaults until then.
+    """
+    return _live_bounds
+
+
+def update_live_bounds(field_length_mm: float, field_width_mm: float) -> None:
+    """Refresh live bounds from an SSL-Vision geometry packet."""
+    global _live_bounds
+    _live_bounds = (
+        -field_length_mm / 2.0,
+         field_length_mm / 2.0,
+        -field_width_mm / 2.0,
+         field_width_mm / 2.0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Live defence / goal geometry
+# Updated alongside live bounds when an SSL-Vision geometry packet arrives.
+# Stores half-widths to match the convention used in voronoi_dijkstra.py.
+# Falls back to the hardcoded defaults until geometry is received.
+# ---------------------------------------------------------------------------
+_live_defence: tuple[float, float, float, float] = (
+    float(DEFENCE_X_MM),       # penalty area depth
+    float(DEFENCE_Y_MM),       # penalty area half-width
+    float(GOAL_HALF_WIDTH_MM), # goal half-width
+    float(GOAL_DEPTH_MM),      # goal depth
+)
+
+
+def get_live_defence() -> tuple[float, float, float, float]:
+    """Return (defence_x_mm, defence_y_mm, goal_half_width_mm, goal_depth_mm).
+
+    All values in mm.  defence_y and goal_half_width are half-widths (±Y).
+    Uses real SSL-Vision geometry once a packet has been received.
+    """
+    return _live_defence
+
+
+def update_live_defence(
+    penalty_area_depth: float,
+    penalty_area_width: float,
+    goal_width: float,
+    goal_depth: float,
+) -> None:
+    """Refresh live defence/goal geometry from an SSL-Vision geometry packet.
+
+    penalty_area_width and goal_width are the *total* widths from the proto;
+    they are halved here to match the ±Y half-width convention used internally.
+    """
+    global _live_defence
+    _live_defence = (
+        float(penalty_area_depth),
+        float(penalty_area_width) / 2.0,
+        float(goal_width) / 2.0,
+        float(goal_depth),
+    )

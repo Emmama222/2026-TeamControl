@@ -69,3 +69,11 @@ refresh cache
 No game rules, no role awareness, no multi-robot coordination.  Useful for
 verifying that the Voronoi/Dijkstra planner generates correct waypoints in
 isolation.
+
+---
+
+## Potential variations (not yet implemented)
+
+| Idea | Description | Where it would live |
+|---|---|---|
+| **Face while moving** | Remove the `nav_vx = nav_vy = 0` zero-out in the face-target block so the robot translates toward its waypoint and rotates to face the ball simultaneously. Requires `movement_target` (waypoint) and `facing_target` (ball) to be passed as separate inputs to the navigator. Currently both are the ball in voronoi-test mode. | `voronoi_navigator.py` (test) or `voronoi_game_navigator.py` (match) |

@@ -1,7 +1,7 @@
 import time
 
 from TeamControl.planner import PlannerInput, VoronoiWaypointManager
-from TeamControl.world.field_config import FIELD_X_MAX
+from TeamControl.world.field_config import FIELD_X_MAX, VORONOI_FIELD_TARGET_MARGIN_MM
 from TeamControl.world.map.obstacles import Obstacle
 from TeamControl.world.map.world_map import WorldMap
 
@@ -212,7 +212,8 @@ def test_waypoint_manager_uses_precision_mode_when_offset_stays_in_clearance():
     assert output.is_path_free is False
     assert output.endpoint_was_adjusted is True
     assert output.endpoint_precision_mode is True
-    assert output.active_target_pose == (FIELD_X_MAX, 0.0, 0.4)
+    # endpoint is clamped to the field-target margin inset, not the raw boundary
+    assert output.active_target_pose == (FIELD_X_MAX - VORONOI_FIELD_TARGET_MARGIN_MM, 0.0, 0.4)
 
 
 def test_waypoint_manager_can_ignore_obstacle_that_contains_target_for_steal():

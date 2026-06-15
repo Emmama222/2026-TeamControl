@@ -11,10 +11,6 @@ from TeamControl.planner.voronoi_dijkstra import (
     VoronoiDijkstraPlanner,
 )
 from TeamControl.world.field_config import (
-    FIELD_X_MAX,
-    FIELD_X_MIN,
-    FIELD_Y_MAX,
-    FIELD_Y_MIN,
     ROBOT_RADIUS_MM,
     VORONOI_BOUNDARY_INSET_MM,
     VORONOI_DENSITY_PERCENT,
@@ -24,6 +20,7 @@ from TeamControl.world.field_config import (
     VORONOI_MAX_DENSITY_NODES,
     VORONOI_OBSTACLE_COST_WEIGHT,
     VORONOI_TARGET_DEAD_ZONE_MM,
+    get_live_bounds,
 )
 from TeamControl.world.map.geometry import distance_2_segment
 from TeamControl.world.map.voronoi_generator import VoronoiObstacle
@@ -130,10 +127,11 @@ class VoronoiWaypointManager:
         requested_target_pose = _pose3(planner_input.target_pose)
         raw_target = _pose_xy(requested_target_pose)
         if planner_input.stay_in_field:
+            x_min, x_max, y_min, y_max = get_live_bounds()
             m = VORONOI_FIELD_TARGET_MARGIN_MM
             target = (
-                max(FIELD_X_MIN + m, min(FIELD_X_MAX - m, float(raw_target[0]))),
-                max(FIELD_Y_MIN + m, min(FIELD_Y_MAX - m, float(raw_target[1]))),
+                max(x_min + m, min(x_max - m, float(raw_target[0]))),
+                max(y_min + m, min(y_max - m, float(raw_target[1]))),
             )
         else:
             target = raw_target
@@ -545,11 +543,11 @@ def _offset_to_inflated_circle(
         dx, dy, dist = 1.0, 0.0, 1.0
 
     radius = _inflated_obstacle_radius(obstacle, clearance_mm, reach_mm) + 5.0
-    return clamp_to_field(
-        (
-            pos[0] + (dx / dist) * radius,
-            pos[1] + (dy / dist) * radius,
-        )
+    x_min, x_max, y_min, y_max = get_live_bounds()
+    m = VORONOI_FIELD_TARGET_MARGIN_MM
+    return (
+        max(x_min + m, min(x_max - m, pos[0] + (dx / dist) * radius)),
+        max(y_min + m, min(y_max - m, pos[1] + (dy / dist) * radius)),
     )
 
 
@@ -597,9 +595,10 @@ def _with_heading(point: Point2D, heading: float) -> Pose2D:
 
 
 def clamp_to_field(point: Point2D) -> Point2D:
+    x_min, x_max, y_min, y_max = get_live_bounds()
     return (
-        max(FIELD_X_MIN, min(FIELD_X_MAX, float(point[0]))),
-        max(FIELD_Y_MIN, min(FIELD_Y_MAX, float(point[1]))),
+        max(x_min, min(x_max, float(point[0]))),
+        max(y_min, min(y_max, float(point[1]))),
     )
 
 

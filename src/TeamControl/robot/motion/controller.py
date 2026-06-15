@@ -5,12 +5,11 @@ from typing import Optional, Tuple
 from TeamControl.robot import constants as C
 from TeamControl.robot.motion.accel import AccelLimiter
 from TeamControl.world.field_config import (
-    FIELD_X_MAX,
-    FIELD_X_MIN,
-    FIELD_Y_MAX,
-    FIELD_Y_MIN,
     VORONOI_BOUNDARY_DECEL_ZONE_MM,
+    VORONOI_BOUNDARY_HARD_STOP_MM,
+    VORONOI_BOUNDARY_NEAR_SPEED_SCALE,
     VORONOI_OUT_OF_FIELD_SPEED_SCALE,
+    get_live_bounds,
 )
 from TeamControl.robot.motion.hardware import (
     apply_hardware_gains,
@@ -278,26 +277,53 @@ class RobotMotionController:
         vx, vy = self.linear_accel.limit((vx, vy))
         if field_limit:
             rx, ry = float(current_pos[0]), float(current_pos[1])
+            theta = float(current_pos[2])
+            cos_t = math.cos(theta)
+            sin_t = math.sin(theta)
+            x_min, x_max, y_min, y_max = get_live_bounds()
+
+            # Robot frame → world frame so boundary checks use world-axis distances
+            vx_w = vx * cos_t - vy * sin_t
+            vy_w = vx * sin_t + vy * cos_t
+
             dist_to_boundary = min(
-                rx - FIELD_X_MIN, FIELD_X_MAX - rx,
-                ry - FIELD_Y_MIN, FIELD_Y_MAX - ry,
+                rx - x_min, x_max - rx,
+                ry - y_min, y_max - ry,
             )
+
             if dist_to_boundary < 0:
-                # Outside field: slow crawl back in.
-                vx *= VORONOI_OUT_OF_FIELD_SPEED_SCALE
-                vy *= VORONOI_OUT_OF_FIELD_SPEED_SCALE
+                # Outside field: slow crawl back in
+                vx_w *= VORONOI_OUT_OF_FIELD_SPEED_SCALE
+                vy_w *= VORONOI_OUT_OF_FIELD_SPEED_SCALE
             elif dist_to_boundary < VORONOI_BOUNDARY_DECEL_ZONE_MM:
-                # Dynamic braking: cap to the speed from which the robot can
-                # stop before the boundary given LINEAR_AMAX.
-                # v_max = sqrt(2 * a * d)  where d is in metres.
-                v_max = math.sqrt(
-                    2.0 * C.LINEAR_AMAX * max(dist_to_boundary / 1000.0, 0.0)
+                # Linear ramp: full speed at zone edge → NEAR_SPEED_SCALE at the wall
+                t = dist_to_boundary / VORONOI_BOUNDARY_DECEL_ZONE_MM
+                v_max = C.MAX_SPEED * (
+                    VORONOI_BOUNDARY_NEAR_SPEED_SCALE
+                    + t * (1.0 - VORONOI_BOUNDARY_NEAR_SPEED_SCALE)
                 )
-                speed = math.hypot(vx, vy)
+                speed = math.hypot(vx_w, vy_w)
                 if speed > v_max and speed > 0.0:
                     scale = v_max / speed
-                    vx *= scale
-                    vy *= scale
+                    vx_w *= scale
+                    vy_w *= scale
+
+            # Hard stop: zero the component pointing toward any boundary
+            # the robot is within VORONOI_BOUNDARY_HARD_STOP_MM of.
+            # This fires regardless of which speed-cap stage is active and
+            # is the final guarantee the robot never crosses the line.
+            if rx - x_min < VORONOI_BOUNDARY_HARD_STOP_MM and vx_w < 0.0:
+                vx_w = 0.0
+            if x_max - rx < VORONOI_BOUNDARY_HARD_STOP_MM and vx_w > 0.0:
+                vx_w = 0.0
+            if ry - y_min < VORONOI_BOUNDARY_HARD_STOP_MM and vy_w < 0.0:
+                vy_w = 0.0
+            if y_max - ry < VORONOI_BOUNDARY_HARD_STOP_MM and vy_w > 0.0:
+                vy_w = 0.0
+
+            # World frame → robot frame
+            vx = vx_w * cos_t + vy_w * sin_t
+            vy = -vx_w * sin_t + vy_w * cos_t
         return vx, vy
 
     def general_motion(

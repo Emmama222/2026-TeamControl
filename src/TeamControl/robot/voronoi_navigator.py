@@ -19,16 +19,18 @@ from TeamControl.robot.constants import (
 )
 from TeamControl.robot.motion.controller import get_motion_controller
 from TeamControl.world.field_config import (
-    FIELD_X_MAX,
-    FIELD_X_MIN,
-    FIELD_Y_MAX,
-    FIELD_Y_MIN,
     VORONOI_CHASE_SPEED_SCALE,
     VORONOI_DENSITY_PERCENT,
+    VORONOI_FIELD_TARGET_MARGIN_MM,
     VORONOI_HORIZON_MS,
     VORONOI_MAX_DENSITY_NODES,
+    VORONOI_POSSESSION_ANGLE_RAD,
+    VORONOI_POSSESSION_DIST_MM,
+    VORONOI_STEAL_FRONT_ANGLE_RAD,
+    VORONOI_STEAL_FRONT_DIST_MM,
     VORONOI_TARGET_OFFSET_MM,
     VORONOI_WAYPOINT_REACHED_MM,
+    get_live_bounds,
 )
 from TeamControl.world.transform_cords import world2robot
 
@@ -113,16 +115,19 @@ def run_voronoi_navigator(
         )
 
         rx, ry = float(rpos[0]), float(rpos[1])
+        x_min, x_max, y_min, y_max = get_live_bounds()
         outside_field = (
-            rx < FIELD_X_MIN or rx > FIELD_X_MAX
-            or ry < FIELD_Y_MIN or ry > FIELD_Y_MAX
+            rx < x_min or rx > x_max
+            or ry < y_min or ry > y_max
         )
 
-        # If outside the field, drive straight back to the nearest boundary point.
+        # If outside the field, drive to the nearest point that is still
+        # VORONOI_FIELD_TARGET_MARGIN_MM inside the boundary.
         # translational_motion applies the out-of-field speed scale internally.
+        _m = VORONOI_FIELD_TARGET_MARGIN_MM
         movement_target = (
-            (max(FIELD_X_MIN, min(FIELD_X_MAX, rx)),
-             max(FIELD_Y_MIN, min(FIELD_Y_MAX, ry)))
+            (max(x_min + _m, min(x_max - _m, rx)),
+             max(y_min + _m, min(y_max - _m, ry)))
             if outside_field else active_target
         )
 
@@ -209,3 +214,41 @@ def _send_stop(dispatch_q, robot_id: int, is_yellow: bool) -> None:
         ),
         0.15,
     ))
+
+
+def _robot_is_in_front_of_possessor(robot_pose, possessor_pose) -> bool:
+    rel = world2robot(possessor_pose, robot_pose[:2])
+    dist = math.hypot(rel[0], rel[1])
+    angle = math.atan2(rel[1], rel[0])
+    return (
+        rel[0] > 0.0
+        and dist <= VORONOI_STEAL_FRONT_DIST_MM
+        and abs(angle) <= VORONOI_STEAL_FRONT_ANGLE_RAD
+    )
+
+
+def _steal_ignore_keys(
+    cache,
+    *,
+    is_yellow: bool,
+    robot_id: int,
+    robot_pose,
+    ball_pos,
+):
+    keys = []
+    opponent_is_yellow = not bool(is_yellow)
+    for opponent_id, opponent_pose in cache.robots.iter_team(opponent_is_yellow):
+        if opponent_is_yellow == bool(is_yellow) and int(opponent_id) == int(robot_id):
+            continue
+        _, dist_to_ball, angle_to_ball = cache.robots.relative_to_ball(
+            opponent_is_yellow,
+            opponent_id,
+            ball_pos,
+        )
+        if (
+            dist_to_ball < VORONOI_POSSESSION_DIST_MM
+            and abs(angle_to_ball) <= VORONOI_POSSESSION_ANGLE_RAD
+            and _robot_is_in_front_of_possessor(robot_pose, opponent_pose)
+        ):
+            keys.append((opponent_is_yellow, int(opponent_id)))
+    return tuple(keys)
