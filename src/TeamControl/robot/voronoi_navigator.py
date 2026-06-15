@@ -8,7 +8,7 @@ import time
 from TeamControl.cache import TickCache
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.planner import PlannerAPI, PlannerInput
-from TeamControl.robot.ball_nav import clamp, move_toward, rotation_compensate
+from TeamControl.robot.ball_nav import clamp, rotation_compensate
 from TeamControl.robot.constants import (
     CRUISE_SPEED,
     FACE_TARGET_ANGLE_RAD,
@@ -17,20 +17,17 @@ from TeamControl.robot.constants import (
     MAX_W,
     TURN_GAIN,
 )
+from TeamControl.robot.motion.controller import get_motion_controller
 from TeamControl.world.field_config import (
     FIELD_X_MAX,
     FIELD_X_MIN,
     FIELD_Y_MAX,
     FIELD_Y_MIN,
-    VORONOI_CHASE_RAMP_DIST_MM,
     VORONOI_CHASE_SPEED_SCALE,
     VORONOI_DENSITY_PERCENT,
     VORONOI_HORIZON_MS,
     VORONOI_MAX_DENSITY_NODES,
-    VORONOI_MIN_SPEED,
-    VORONOI_OUT_OF_FIELD_SPEED_SCALE,
     VORONOI_TARGET_OFFSET_MM,
-    VORONOI_TARGET_STOP_MM,
     VORONOI_WAYPOINT_REACHED_MM,
 )
 from TeamControl.world.transform_cords import world2robot
@@ -38,7 +35,6 @@ from TeamControl.world.transform_cords import world2robot
 
 CHASE_SPEED = CRUISE_SPEED * VORONOI_CHASE_SPEED_SCALE
 WAYPOINT_REACHED_MM = VORONOI_WAYPOINT_REACHED_MM
-TARGET_STOP_MM = VORONOI_TARGET_STOP_MM
 
 
 def run_voronoi_navigator(
@@ -55,6 +51,7 @@ def run_voronoi_navigator(
         density_percent=VORONOI_DENSITY_PERCENT,
         max_density_nodes=VORONOI_MAX_DENSITY_NODES,
     )
+    motion_ctrl = get_motion_controller(robot_id, is_yellow)
     active_target = None
 
     while is_running.is_set():
@@ -121,28 +118,23 @@ def run_voronoi_navigator(
             or ry < FIELD_Y_MIN or ry > FIELD_Y_MAX
         )
 
-        # If outside the field, drive straight back to the nearest boundary
-        # point and scale velocity to 10% to prevent runaway overshoot.
+        # If outside the field, drive straight back to the nearest boundary point.
+        # translational_motion applies the out-of-field speed scale internally.
         movement_target = (
             (max(FIELD_X_MIN, min(FIELD_X_MAX, rx)),
              max(FIELD_Y_MIN, min(FIELD_Y_MAX, ry)))
             if outside_field else active_target
         )
 
-        rel_move = world2robot(rpos, movement_target)
         rel_ball = world2robot(rpos, ball)
 
-        nav_vx, nav_vy = move_toward(
-            rel_move,
-            CHASE_SPEED,
-            ramp_dist=VORONOI_CHASE_RAMP_DIST_MM,
-            stop_dist=TARGET_STOP_MM,
-            min_speed=VORONOI_MIN_SPEED,
+        dist_to_move = math.hypot(
+            movement_target[0] - rpos[0], movement_target[1] - rpos[1]
         )
-
-        if outside_field:
-            nav_vx *= VORONOI_OUT_OF_FIELD_SPEED_SCALE
-            nav_vy *= VORONOI_OUT_OF_FIELD_SPEED_SCALE
+        deadline = time.monotonic() + max(dist_to_move / 1000.0 / CHASE_SPEED, 0.1)
+        nav_vx, nav_vy = motion_ctrl.translational_motion(
+            rpos, movement_target, deadline, field_limit=True
+        )
 
         dist_to_ball = math.hypot(rel_ball[0], rel_ball[1])
         ang_ball = math.atan2(rel_ball[1], rel_ball[0])
