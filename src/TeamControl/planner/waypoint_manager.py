@@ -48,6 +48,7 @@ class PlannerInput:
     endpoint_reach_mm: float = VORONOI_ENDPOINT_REACH_MM
     world_map: object | None = None
     now_s: float | None = None
+    stay_in_field: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +127,8 @@ class VoronoiWaypointManager:
 
         start = _pose_xy(planner_input.current_pose)
         requested_target_pose = _pose3(planner_input.target_pose)
-        target = clamp_to_field(_pose_xy(requested_target_pose))
+        raw_target = _pose_xy(requested_target_pose)
+        target = clamp_to_field(raw_target) if planner_input.stay_in_field else raw_target
         ignore_robots = {robot_key}
         path_map = planner_input.world_map or _ObstaclePathMap(
             planner_input.obstacles,
@@ -220,6 +222,7 @@ class VoronoiWaypointManager:
                 now_s=planner_input.now_s,
                 ignore_robots=ignore_robots,
                 previous_state=previous,
+                stay_in_field=planner_input.stay_in_field,
             )
             state.waypoints = tuple(
                 _with_heading(point, target_pose[2])

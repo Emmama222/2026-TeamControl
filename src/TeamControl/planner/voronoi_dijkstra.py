@@ -8,16 +8,20 @@ from math import hypot
 from typing import Iterable
 
 from TeamControl.world.field_config import (
+    DEFENCE_X_MM,
+    DEFENCE_Y_MM,
     FIELD_X_MAX,
     FIELD_X_MIN,
     FIELD_Y_MAX,
     FIELD_Y_MIN,
+    GOAL_HALF_WIDTH_MM,
     ROBOT_RADIUS_MM,
     VORONOI_BOUNDARY_INSET_MM,
     VORONOI_CONNECTION_COUNT,
     VORONOI_CONNECTION_RADIUS_MM,
     VORONOI_DENSITY_PERCENT,
     VORONOI_ESCAPE_MARGIN_MM,
+    VORONOI_FIELD_TARGET_MARGIN_MM,
     VORONOI_HORIZON_MS,
     VORONOI_MAX_DENSITY_NODES,
     VORONOI_MIN_ESCAPE_STEP_MM,
@@ -90,15 +94,30 @@ class VoronoiDijkstraPlanner:
         now_s: float | None = None,
         ignore_robots: set[RobotKey] | None = None,
         previous_state: PlannerState | None = None,
+        stay_in_field: bool = True,
     ) -> PlanResult:
-        """Return waypoints from *start_pos_mm* to a clamped target."""
+        """Return waypoints from *start_pos_mm* toward *target_pos_mm*.
+
+        When *stay_in_field* is True (default) the target is clamped to the
+        field and all returned waypoints are validated to stay within it.
+        Set to False to allow planning toward out-of-field targets (e.g. the
+        ball rolling out of bounds) while still being aware of the goal posts.
+        """
         if ignore_robots is None:
             ignore_robots = set()
         if previous_state is None:
             previous_state = PlannerState()
 
         start = _point2(start_pos_mm)
-        target = clamp_to_field(_point2(target_pos_mm))
+        raw = _point2(target_pos_mm)
+        if stay_in_field:
+            m = VORONOI_FIELD_TARGET_MARGIN_MM
+            target = (
+                max(FIELD_X_MIN + m, min(FIELD_X_MAX - m, raw[0])),
+                max(FIELD_Y_MIN + m, min(FIELD_Y_MAX - m, raw[1])),
+            )
+        else:
+            target = raw
 
         escape_waypoint = self._escape_waypoint_from_containing_obstacles(
             world_map,
@@ -178,10 +197,26 @@ class VoronoiDijkstraPlanner:
         if not ids:
             return PlanResult(target_mm=target, waypoints_mm=())
 
-        waypoints = tuple(
-            target if node_id == self.TARGET_ID else node_pos[node_id]
-            for node_id in ids[1:]
-        )
+        intermediate = tuple(node_pos[nid] for nid in ids[1:-1])
+
+        # Goal-post awareness is always active regardless of stay_in_field.
+        # A path crossing through the physical goal structure is never valid.
+        full_path = (start, *intermediate, target)
+        if any(
+            _segment_crosses_goal_zone(full_path[i], full_path[i + 1])
+            for i in range(len(full_path) - 1)
+        ):
+            return PlanResult(target_mm=target, waypoints_mm=())
+
+        # Field-boundary validation only when stay_in_field is set.
+        if stay_in_field and any(
+            not is_in_field(wp, margin=-VORONOI_FIELD_TARGET_MARGIN_MM)
+            or is_in_goal_zone(wp)
+            for wp in intermediate
+        ):
+            return PlanResult(target_mm=target, waypoints_mm=())
+
+        waypoints = (*intermediate, target)
         return PlanResult(target_mm=target, waypoints_mm=waypoints)
 
     def _escape_waypoint_from_containing_obstacles(
@@ -373,12 +408,90 @@ def _obstacle_radius(obstacle: object) -> float:
     return 0.0
 
 
+def is_in_goal_zone(point: Point) -> bool:
+    """Return True if *point* is inside either physical goal box.
+
+    The goal box extends GOAL_DEPTH_MM past each end line, centred on the
+    field.  It is physically walled on three sides — no path may pass through it.
+    """
+    x, y = float(point[0]), float(point[1])
+    if abs(y) > GOAL_HALF_WIDTH_MM:
+        return False
+    return x > FIELD_X_MAX or x < FIELD_X_MIN
+
+
+def _segment_crosses_goal_zone(p1: Point, p2: Point) -> bool:
+    """Return True if the segment p1→p2 enters either physical goal box.
+
+    Checks whether the segment crosses x = FIELD_X_MAX or x = FIELD_X_MIN
+    at a y-value within the goal mouth (|y| <= GOAL_HALF_WIDTH_MM).
+    """
+    x1, y1 = float(p1[0]), float(p1[1])
+    x2, y2 = float(p2[0]), float(p2[1])
+    for wall_x in (FIELD_X_MIN, FIELD_X_MAX):
+        dx = x2 - x1
+        if abs(dx) < 1e-9:
+            continue
+        t = (wall_x - x1) / dx
+        if 0.0 <= t <= 1.0:
+            cross_y = y1 + t * (y2 - y1)
+            if abs(cross_y) <= GOAL_HALF_WIDTH_MM:
+                return True
+    return False
+
+
 def clamp_to_field(point: Point) -> Point:
     """Clamp a point to the full playable field rectangle."""
     return (
         max(FIELD_X_MIN, min(FIELD_X_MAX, float(point[0]))),
         max(FIELD_Y_MIN, min(FIELD_Y_MAX, float(point[1]))),
     )
+
+
+def is_in_box(
+    point: Point,
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+    margin: float = 0.0,
+) -> bool:
+    """Return True if *point* lies inside the box inset by *margin* on every side.
+
+    A positive margin shrinks the effective box, so the point must be at least
+    *margin* mm clear of each boundary edge.
+    """
+    x, y = float(point[0]), float(point[1])
+    return (
+        x_min + margin <= x <= x_max - margin
+        and y_min + margin <= y <= y_max - margin
+    )
+
+
+def is_in_field(point: Point, margin: float = 0.0) -> bool:
+    """Return True if *point* is inside the full field, inset by *margin* mm."""
+    return is_in_box(point, FIELD_X_MIN, FIELD_X_MAX, FIELD_Y_MIN, FIELD_Y_MAX, margin)
+
+
+def is_in_penalty_box(
+    point: Point,
+    *,
+    positive_side: bool = True,
+    margin: float = 0.0,
+) -> bool:
+    """Return True if *point* is inside the penalty/defence area on the chosen side.
+
+    *positive_side=True* checks the positive-x goal end; False checks the
+    negative-x goal end.  *margin* insets all four edges (use ROBOT_RADIUS_MM
+    to test with a robot-body clearance).
+    """
+    if positive_side:
+        x_min = FIELD_X_MAX - DEFENCE_X_MM
+        x_max = FIELD_X_MAX
+    else:
+        x_min = FIELD_X_MIN
+        x_max = FIELD_X_MIN + DEFENCE_X_MM
+    return is_in_box(point, x_min, x_max, -DEFENCE_Y_MM, DEFENCE_Y_MM, margin)
 
 
 def _distance(a: Point, b: Point) -> float:

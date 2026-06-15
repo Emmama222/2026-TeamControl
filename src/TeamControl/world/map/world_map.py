@@ -6,6 +6,10 @@ from typing import Iterable, Optional
 from TeamControl.world.map.geometry import linear_velocity
 from TeamControl.world.map.obstacles import Obstacle,ROBOT_RADIUS_MM
 from TeamControl.world.field_config import (
+    FIELD_X_MAX,
+    FIELD_X_MIN,
+    FIELD_Y_MAX,
+    FIELD_Y_MIN,
     VORONOI_HORIZON_MS,
     VORONOI_OBSTACLE_COST_WEIGHT,
     VORONOI_RENDER_DENSITY_PERCENT,
@@ -345,6 +349,9 @@ class WorldMap:
         planning_obstacles = []
         for obs in self.obs:
             if (obs.isYellow, obs.robot_id) in ignore_robots:
+                continue
+            px, py = obs.pos_mm[0], obs.pos_mm[1]
+            if not (FIELD_X_MIN <= px <= FIELD_X_MAX and FIELD_Y_MIN <= py <= FIELD_Y_MAX):
                 continue
             age_ms = obs.age_s(now_s) * 1000.0
             prediction_horizon_ms = age_ms + horizon_ms

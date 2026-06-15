@@ -17,7 +17,7 @@ _TUNING_PATH = os.path.normpath(_TUNING_PATH)
 def _load_tuning():
     defaults = {
         "max_speed": 5.0, # testing recommend 1.0, want fast in test irl 3.0
-        "max_w_raw": 0.5,
+        "max_w_raw": 1,
         "w_clamp_pct": 0.60,
         "manual_max_w": 10.0,
         "turn_gain": 0.8,
@@ -150,8 +150,12 @@ ANGULAR_AMAX      = 28.4   # rad/s² — max angular acceleration / deceleration
 
 # Threshold zones for go_to_target (mm)
 KICKER_ZONE        = 70       # below this, speed is 0
-DRIBBLE_ZONE       = 400      # below this, speed is capped to DRIBBLE_SPEED_FRAC
+DRIBBLE_ZONE       = 180      # below this, speed is capped to DRIBBLE_SPEED_FRAC
 DRIBBLE_SPEED_FRAC = 0.2      # fraction of max_speed inside dribble zone
+
+# Face-target behaviour
+FACE_TARGET_DIST_MM   = 180   # mm  — within this range, align before moving
+FACE_TARGET_ANGLE_RAD = 0.2   # rad — angle error above which translation is suppressed
 
 # ═════════════════════════════════════════════════════════════════
 #  THRESHOLDS

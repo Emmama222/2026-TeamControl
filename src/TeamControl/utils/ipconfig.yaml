@@ -72,8 +72,11 @@ blue:
     grSimID: 5
     shellID: 5
     has_chip_kick: false
+goalie:
+  yellow: A
+  blue: A
 grSim:
-  ip: 127.0.0.1
+  ip: 192.168.2.177
   port: 20011
 vision:
   multicast-group: 224.5.23.2

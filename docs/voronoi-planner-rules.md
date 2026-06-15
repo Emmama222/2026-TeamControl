@@ -116,24 +116,20 @@ Notes:
 - Weighting should only rank safe choices.
 - Wider corridors should naturally win over narrow corridors.
 
-## Rule 1: Clamp Target To Playable Area
+## Rule 1: Sanitise Target Into Playable Area
 
-When the planner receives a target point, it first checks whether the target is
-inside the playable area.
-
-The first clamp is the field rectangle.
-
-Default field:
+`VoronoiDijkstraPlanner.plan()` clamps the raw target to the field rectangle
+inset by `VORONOI_FIELD_TARGET_MARGIN_MM` before any planning occurs.  Callers
+do not need to sanitise the target themselves — the planner is the single
+enforcement point.
 
 ```text
-x: -4500 to 4500
-y: -3000 to 3000
+effective_x = clamp(raw_x, FIELD_X_MIN + m, FIELD_X_MAX - m)
+effective_y = clamp(raw_y, FIELD_Y_MIN + m, FIELD_Y_MAX - m)
+where m = VORONOI_FIELD_TARGET_MARGIN_MM  (default 0.0 mm)
 ```
 
-If the target is outside the field, clamp it to the nearest point inside the
-field.
-
-Clamping should preserve the coordinate that is already valid where possible:
+Examples with m = 0:
 
 ```text
 (5000, 1000)  -> (4500, 1000)
@@ -141,8 +137,9 @@ Clamping should preserve the coordinate that is already valid where possible:
 (5000, 4000)  -> (4500, 3000)
 ```
 
-Later we may change this to use the inset navigation bounds instead of the raw
-field boundary.
+Increasing `VORONOI_FIELD_TARGET_MARGIN_MM` keeps targets away from the boundary
+before the graph is consulted.  The same constant also gates the intermediate-node
+validity check in Rule 3.
 
 ## Rule 2: Always Check Direct Path
 
@@ -173,8 +170,9 @@ this decision as:
 planner_output.is_path_free
 ```
 
-If `is_path_free` is `True`, `active_target_pose` is the field-clamped target
-and no replan is performed. The planner also clears any previous planned
+If `is_path_free` is `True`, `active_target_pose` is the sanitised target
+(clamped to field inset by `VORONOI_FIELD_TARGET_MARGIN_MM`) and no replan is
+performed. The planner also clears any previous planned
 waypoints in this case. If it is `False`, the manager checks whether an
 existing waypoint path can still be used before running a fresh Dijkstra plan.
 
@@ -375,9 +373,45 @@ Passing explicit obstacles makes the planner tick deterministic from the
 caller's point of view. Passing `world_map=wm` is also supported, but that keeps
 path checks and obstacle reads behind the world-map proxy for that call.
 
-## Ball-Steal Clearance Exception
+## Rule 3: Path Validity — Reject Corrupt Intermediate Nodes
 
-`voronoi_test` normally keeps clearance rules enabled while following the ball.
+After Dijkstra returns a path, every **intermediate** Voronoi graph node
+(everything between start and target) is validated.  The target itself is not
+checked here because the caller controls it via Rule 1.
+
+A path is discarded (empty waypoints returned) if any intermediate node:
+
+1. **Is outside the field** by more than `VORONOI_FIELD_TARGET_MARGIN_MM`.
+   The Voronoi graph is built inside the inset boundary, so an out-of-bounds
+   node indicates a graph defect.
+
+   ```text
+   valid_x: FIELD_X_MIN - m  ..  FIELD_X_MAX + m
+   valid_y: FIELD_Y_MIN - m  ..  FIELD_Y_MAX + m
+   ```
+
+2. **Is inside a physical goal box**.  The goal structure has walls on three
+   sides — no robot can traverse through it.  A node is in the goal zone when:
+
+   ```text
+   |y| <= GOAL_HALF_WIDTH_MM  AND  (x > FIELD_X_MAX OR x < FIELD_X_MIN)
+   ```
+
+   `GOAL_HALF_WIDTH_MM = 500 mm` (defined in `field_config.py`).
+
+Discarding the path rather than clamping individual nodes preserves safety: a
+path with one corrupt node may have more corruption elsewhere, and clamping it
+silently could produce a physically impossible route.
+
+## Ball-Steal Clearance Exception *(future game navigator)*
+
+> **Note:** the behaviours described in this section were removed from
+> `voronoi_navigator.py` when it was simplified to a bare planner integrator.
+> They are documented here as intended game-navigator rules to be implemented in
+> `voronoi_game_navigator.py`.  See
+> [voronoi-navigator-stripped.md](voronoi-navigator-stripped.md).
+
+The game navigator keeps clearance rules enabled while following the ball.
 The only exception is a narrow ball-steal case.
 
 An obstacle can be ignored at the ball target only when it is the specific robot
@@ -415,3 +449,27 @@ line as a planned route.
 For display only, planned-path polylines are clipped to the current field
 rectangle before rendering. This prevents off-field robot observations or stale
 route points from drawing large floating blue/yellow shapes outside the field.
+
+## voronoi\_test Mode — Integrator Behaviour
+
+`voronoi_navigator.py` in `voronoi_test` mode is a **bare integrator** for
+testing the planner in isolation.  It intentionally contains no game logic.
+
+Each tick:
+
+1. Refresh world-model cache.
+2. Use the raw ball position as target (the planner sanitises it via Rule 1).
+3. Call `PlannerAPI.plan()` with no steal-ignore keys and zero clearance.
+4. Move toward `plan.active_target_pose` at `CHASE_SPEED` with a standard
+   deceleration ramp.
+5. Face the ball with a proportional angular controller.
+6. **Field enforcement**: if the robot's own position is outside the field,
+   override the planner waypoint and drive straight back to the nearest boundary
+   point.  This takes priority over all planner output.
+7. **Target offset**: stop translating once within `VORONOI_TARGET_OFFSET_MM`
+   of the ball (default 150 mm).  The robot still rotates to face the ball.
+
+Stripped behaviours (possession, steal, face-target stop, precision approach,
+exponential smoothing, penalty-box guard) are documented in
+[voronoi-navigator-stripped.md](voronoi-navigator-stripped.md) for the future
+game navigator.
