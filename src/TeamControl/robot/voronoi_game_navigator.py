@@ -9,6 +9,11 @@ behaviours a real game needs:
 - Possession/steal        — temporarily ignore a possessing opponent so we
                              can challenge them (helpers ported from
                              voronoi_navigator.py, now actually wired in).
+- Out-of-bounds clearance — when the ball leaves the field, back off to a
+                             point >= OUT_OF_BOUNDS_CLEARANCE_MM from both
+                             the ball's exit spot and the boundary line it
+                             crossed (see compute_out_of_bounds_clearance
+                             in ball_nav.py), instead of just stopping.
 - Precision approach mode — slow to a tighter, gentler ramp near the target
                              when the planner flags endpoint_precision_mode.
 - Exponential smoothing   — low-pass filter on the output command so it
@@ -32,7 +37,6 @@ from TeamControl.planner import PlannerAPI, PlannerInput
 from TeamControl.planner.voronoi_dijkstra import is_in_penalty_box
 from TeamControl.robot.ball_nav import (
     clamp,
-    compute_ball_clearance_target,
     compute_out_of_bounds_clearance,
     rotation_compensate,
     sanitize_field_target,
@@ -73,10 +77,11 @@ CHASE_SPEED = CRUISE_SPEED * VORONOI_CHASE_SPEED_SCALE
 PRECISION_APPROACH_SPEED = CRUISE_SPEED * VORONOI_PRECISION_SPEED_SCALE
 WAYPOINT_REACHED_MM = VORONOI_WAYPOINT_REACHED_MM
 
-# SSL's standard ball-clearance distance -- used both when the ball has
-# left the field (stay clear of the ball and the line it crossed) and
-# when an opponent has just gained possession (back off before stealing).
-CLEARANCE_MM = 500.0
+# How far to back off from the ball's exit point/the boundary line it
+# crossed once the ball has gone out of bounds. See compute_out_of_bounds_
+# clearance() in ball_nav.py -- this single distance keeps us clear of both.
+OUT_OF_BOUNDS_CLEARANCE_MM = 500.0
+
 # How long to hold the clearance distance after an opponent gains
 # possession before switching to an active steal attempt.
 STEAL_DELAY_S = 1.0
@@ -119,9 +124,9 @@ def run_voronoi_game_navigator(
             continue
 
         if not cache.ball.visible:
-            # Ball out of bounds: back off to a point that's >= CLEARANCE_MM
-            # from both the ball's exit spot and the line it crossed,
-            # instead of just freezing in place.
+            # Ball out of bounds: back off to a point that's >= the
+            # clearance distance from both the ball's exit spot and the
+            # line it crossed, instead of just freezing in place.
             if getattr(wm, "last_ball_rejection_reason", None) == "out_of_bounds":
                 exit_pos = getattr(wm, "possible_ball_left_field_pos_mm", None)
                 if exit_pos is not None:
@@ -132,11 +137,6 @@ def run_voronoi_game_navigator(
                     time.sleep(LOOP_RATE)
                     continue
             _send_stop(dispatch_q, robot_id, is_yellow)
-            time.sleep(LOOP_RATE)
-            continue
-
-        rpos = cache.robots.get_position(is_yellow, robot_id)
-        if rpos is None:
             time.sleep(LOOP_RATE)
             continue
 
@@ -243,7 +243,7 @@ def run_voronoi_game_navigator(
             dist_to_move / 1000.0 / max(approach_speed, 0.01), 0.1
         )
         nav_vx, nav_vy = motion_ctrl.translational_motion(
-            rpos, movement_target, deadline, field_limit=True
+            rpos, movement_target, deadline, stay_in_field=True
         )
 
         dist_to_ball = math.hypot(rel_ball[0], rel_ball[1])
@@ -340,6 +340,27 @@ def _send_stop(dispatch_q, robot_id: int, is_yellow: bool) -> None:
             robot_id=robot_id,
             vx=0.0,
             vy=0.0,
+            w=0.0,
+            kick=0,
+            dribble=0,
+            isYellow=is_yellow,
+        ),
+        0.15,
+    ))
+
+
+def _drive_to_clearance(motion_ctrl, dispatch_q, rpos, exit_pos, robot_id, is_yellow) -> None:
+    """Back off to >= OUT_OF_BOUNDS_CLEARANCE_MM from the ball's exit point
+    and the boundary line it crossed, instead of stopping in place."""
+    target = compute_out_of_bounds_clearance(exit_pos, OUT_OF_BOUNDS_CLEARANCE_MM)
+    dist = math.hypot(target[0] - rpos[0], target[1] - rpos[1])
+    deadline = time.monotonic() + max(dist / 1000.0 / max(CHASE_SPEED, 0.01), 0.1)
+    vx, vy = motion_ctrl.translational_motion(rpos, target, deadline, stay_in_field=True)
+    dispatch_q.put((
+        RobotCommand(
+            robot_id=robot_id,
+            vx=vx,
+            vy=vy,
             w=0.0,
             kick=0,
             dribble=0,
