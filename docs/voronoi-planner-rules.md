@@ -359,14 +359,15 @@ planner_output = planner.plan(
         target_pose=target_pose,
         obstacles=obstacles,
         clearance_mm=200,
-        robot_reached_current_waypoint=pd_output.robot_reached_target,
+        robot_reached_current_waypoint=nav_output.robot_reached_target,
     )
 )
 ```
 
-`planner_output.active_target_pose` is the target the PD Controller should
-track. If there is an active waypoint, it is returned first. If the direct path
-is free, the field-clamped target is returned.
+`planner_output.active_target_pose` is the target the movement layer
+(`ball_nav.move_toward()`) should track. If there is an active waypoint, it
+is returned first. If the direct path is free, the field-clamped target is
+returned.
 
 `WorldModel` should provide world snapshots, obstacle snapshots, and render
 data. The planner API owns route state and waypoint decisions. This keeps the
@@ -477,10 +478,11 @@ Each tick:
 3. Call `PlannerAPI.plan()` with no steal-ignore keys and zero clearance.
    The waypoint manager applies Rule 1 (target margin) before returning
    `active_target_pose`.
-4. Drive toward `active_target_pose` using `RobotMotionController.translational_motion(
-   current_pos, movement_target, deadline, field_limit=True)`.
-   The `field_limit=True` flag enables the dynamic-braking cap inside the
-   controller (see PD Controller — Field Enforcement section).
+4. Drive toward `active_target_pose` using `ball_nav.move_toward(rel_target, CHASE_SPEED)`,
+   then `ball_nav.apply_boundary_braking(current_pos, vx, vy)`.
+   The latter applies the dynamic-braking cap (see Field Enforcement section
+   below) — ported from the old PD controller's `field_limit=True` option
+   when the PD controller was removed for this competition.
 5. Face the ball with a proportional angular controller (`ang_ball * TURN_GAIN`).
 6. **Field override**: if the robot is outside the field, `movement_target` is
    overridden to the nearest boundary clamp point (takes priority over planner output).
@@ -507,5 +509,5 @@ pipeline:
 | **Node validation** | Dijkstra intermediate nodes outside field or in goal zone → path discarded | `voronoi_dijkstra.py` Rule 3 |
 | **Segment check** | Any path segment crossing the physical goal mouth → path discarded | `voronoi_dijkstra.py` (always active) |
 | **Navigator override** | Robot outside field → movement target overridden to nearest boundary point | `voronoi_navigator.py` |
-| **Dynamic braking** | Within `VORONOI_BOUNDARY_DECEL_ZONE_MM` of boundary → speed capped to `sqrt(2 × LINEAR_AMAX × dist)` | `controller.py:translational_motion(field_limit=True)` |
-| **Out-of-field scale** | Robot outside field → velocity × `VORONOI_OUT_OF_FIELD_SPEED_SCALE` (0.1) | `controller.py:translational_motion(field_limit=True)` |
+| **Dynamic braking** | Within `VORONOI_BOUNDARY_DECEL_ZONE_MM` of boundary → speed capped, ramping from `VORONOI_BOUNDARY_NEAR_SPEED_SCALE` at the wall to full speed at the zone edge | `ball_nav.py:apply_boundary_braking()` |
+| **Out-of-field scale** | Robot outside field → velocity × `VORONOI_OUT_OF_FIELD_SPEED_SCALE` (0.1) | `ball_nav.py:apply_boundary_braking()` |
