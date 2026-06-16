@@ -19,7 +19,7 @@ from TeamControl.onboard_vision import build_ip_map
 from TeamControl.robot.goalie import run_goalie
 from TeamControl.robot.striker import run_striker
 from TeamControl.robot.navigator import run_navigator, WAYPOINTS_A, WAYPOINTS_B
-from TeamControl.robot.voronoi_navigator import run_voronoi_navigator
+from TeamControl.robot.voronoi_game_navigator import run_voronoi_game_navigator
 from TeamControl.robot.team import run_team
 from TeamControl.robot.coop import run_coop
 
@@ -99,11 +99,11 @@ def main():
     elif args.mode == "voronoi_test":
         # One shell from each team chases the ball through the live Voronoi map.
         foreground.append(
-            Process(target=run_voronoi_navigator,
+            Process(target=run_voronoi_game_navigator,
                     args=(is_running, dispatch_q, wm,
                           0, preset.us_yellow)))
         foreground.append(
-            Process(target=run_voronoi_navigator,
+            Process(target=run_voronoi_game_navigator,
                     args=(is_running, dispatch_q, wm,
                           0, not preset.us_yellow)))
 
