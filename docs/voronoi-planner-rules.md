@@ -418,13 +418,14 @@ Discarding the path rather than clamping individual nodes preserves safety: a
 path with one corrupt node may have more corruption elsewhere, and clamping it
 silently could produce a physically impossible route.
 
-## Ball-Steal Clearance Exception *(future game navigator)*
+## Ball-Steal Clearance Exception
 
-> **Note:** the behaviours described in this section were removed from
-> `voronoi_navigator.py` when it was simplified to a bare planner integrator.
-> They are documented here as intended game-navigator rules to be implemented in
-> `voronoi_game_navigator.py`.  See
-> [voronoi-navigator-stripped.md](voronoi-navigator-stripped.md).
+> **Note:** these rules were removed from `voronoi_navigator.py` when it was
+> simplified to a bare planner integrator, and are now implemented in the
+> production game navigator, `voronoi_game_navigator.py`
+> (`_steal_ignore_keys` / `_robot_is_in_front_of_possessor`).  See
+> [voronoi-navigator-stripped.md](voronoi-navigator-stripped.md) for the
+> full list of what moved there.
 
 The game navigator keeps clearance rules enabled while following the ball.
 The only exception is a narrow ball-steal case.
@@ -508,6 +509,9 @@ pipeline:
 | **Target margin** | Target clamped to `FIELD_*_MIN/MAX ± VORONOI_FIELD_TARGET_MARGIN_MM` | `waypoint_manager.py` (all cases) + `voronoi_dijkstra.py` (Dijkstra run) |
 | **Node validation** | Dijkstra intermediate nodes outside field or in goal zone → path discarded | `voronoi_dijkstra.py` Rule 3 |
 | **Segment check** | Any path segment crossing the physical goal mouth → path discarded | `voronoi_dijkstra.py` (always active) |
-| **Navigator override** | Robot outside field → movement target overridden to nearest boundary point | `voronoi_navigator.py` |
+| **Navigator override** | Robot outside field → movement target overridden to nearest boundary point | `voronoi_navigator.py`, `voronoi_game_navigator.py` |
 | **Dynamic braking** | Within `VORONOI_BOUNDARY_DECEL_ZONE_MM` of boundary → speed capped, ramping from `VORONOI_BOUNDARY_NEAR_SPEED_SCALE` at the wall to full speed at the zone edge | `ball_nav.py:apply_boundary_braking()` |
 | **Out-of-field scale** | Robot outside field → velocity × `VORONOI_OUT_OF_FIELD_SPEED_SCALE` (0.1) | `ball_nav.py:apply_boundary_braking()` |
+| **Hard stop** | Within `VORONOI_BOUNDARY_HARD_STOP_MM` (30 mm) of any edge → the velocity component pointing further out is zeroed outright, regardless of which stage above fired | `ball_nav.py:apply_boundary_braking()` |
+| **Goal-post zone** | Past an end line, within `GOAL_HALF_WIDTH_MM + ROBOT_RADIUS` of the centre line → x-component driving into the goal structure is zeroed | `ball_nav.py:apply_boundary_braking()` |
+| **Ball-out-of-bounds clearance** | Ball left the field (`wm.last_ball_rejection_reason == "out_of_bounds"`) → robot drives to a point ≥ `OUT_OF_BOUNDS_CLEARANCE_MM` (500 mm) from both the ball's exit point and the boundary line it crossed, instead of stopping in place | `ball_nav.py:compute_out_of_bounds_clearance()`, wired in by `voronoi_game_navigator.py` (not the bare `voronoi_navigator.py` integrator) |
