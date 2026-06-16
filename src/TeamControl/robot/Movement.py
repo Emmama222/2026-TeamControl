@@ -88,6 +88,40 @@ class RobotMovement:
         self.angular_pd.reset()
         self.linear_pd.reset()
 
+    def step(self, intent: Intent, state: RobotState,
+             threshold_xy: float = 50.0,
+             threshold_theta: float = 0.05) -> Optional[Tuple[float, float, float]]:
+        """
+        Main entry point called every tick by the Behaviour Tree.
+
+        Returns (vx, vy, w) to drive the robot, or None when it has arrived
+        (close enough in position AND facing the right way).
+        """
+        target_xy = (intent.target[0], intent.target[1])
+        target_theta = intent.target[2]
+
+        # Arrived? Both conditions must pass before we stop commanding.
+        if is_close(target_xy, (state.x, state.y), threshold_xy) and \
+           is_facing_direction(target_theta, state.theta, threshold_theta):
+            self.reset()  # clear history so next move starts clean
+            return None
+
+        # Linear velocity: convert target to robot's local frame first,
+        # because motor commands are in robot-frame (forward/sideways).
+        local_target = world2robot((state.x, state.y, state.theta), target_xy)
+        vx, vy = self.go_to_target(local_target)
+
+
+        # Angular velocity: shortest rotation to target heading.
+        angle_err = _wrap_angle(target_theta - state.theta)
+        if abs(angle_err) < C.ANGLE_EPSILON:
+            self.angular_pd.reset()
+            w = 0.0
+        else:
+            w = self.angular_pd.update(angle_err)
+
+        return vx, vy, w
+
     def set_role(self, is_goalie: bool) -> None:
         """Set whether this robot is the goalie (used by stay_in_field's
         penalty-box clamp: goalie stays in, non-goalie stays out)."""
