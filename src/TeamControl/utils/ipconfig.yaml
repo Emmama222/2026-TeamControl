@@ -76,7 +76,7 @@ goalie:
   yellow: A
   blue: A
 grSim:
-  ip: 192.168.2.177
+  ip: 127.0.0.1
   port: 20011
 vision:
   multicast-group: 224.5.23.2
