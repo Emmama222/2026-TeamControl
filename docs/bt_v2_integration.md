@@ -119,6 +119,44 @@ has not received its first vision frame yet, the tick is skipped.
 
 ---
 
+## Field side convention (`us_positive`)
+
+Every tree that cares about field direction (`GoalieTree`, `AttackerTree`,
+`DefenderTree`, `SupporterTree`) receives a single `us_positive: bool`
+argument at construction time.
+
+```
+us_positive = True   →   OUR team occupies the +x half of the field
+                         Our goal is at  x ≈ +4.5 m  (goalie defends +x end)
+                         Opponent goal is at  x ≈ −4.5 m  (attacker shoots −x)
+
+us_positive = False  →   OUR team occupies the −x half of the field
+                         Our goal is at  x ≈ −4.5 m  (goalie defends −x end)
+                         Opponent goal is at  x ≈ +4.5 m  (attacker shoots +x)
+```
+
+This value is read from `ipconfig.yaml` (`us_positive: true/false`) and
+**must not be hardcoded** to a team colour. Yellow and blue can each occupy
+either half depending on the match setup.
+
+### How `us_positive` is derived in `run_bt_v2_process`
+
+```python
+cfg_us_positive = bool(_cfg.us_positive)   # our team's side from yaml
+cfg_us_yellow   = bool(_cfg.us_yellow)     # which colour is "us" in yaml
+
+# Same team as configured → use yaml value directly.
+# Opponent team → flip it (they're on the other half).
+_us_positive = cfg_us_positive if (is_yellow == cfg_us_yellow) else not cfg_us_positive
+```
+
+**Common mistake:** using `_us_positive = not is_yellow` (i.e. always
+putting yellow on −x and blue on +x). This only works in one specific
+field setup and will cause the goalie to defend the wrong goal and the
+attacker to shoot into its own goal when the team is on the +x side.
+
+---
+
 ## Running the moved tests
 
 ```powershell
@@ -133,21 +171,50 @@ stack to run — `py_trees` is the only non-stdlib dep.
 
 ## Known gaps / follow-ups
 
+### Adapter / data quality
+
 1. **Ball velocity** is hard-coded to `(0, 0)`. Wire `velocity_est` or
    compute from frame history so `IsBallComing` and pass logic can use
    real motion data.
 2. **Referee score** is hard-coded `(0, 0)`; expose from `wm.ref_data`.
-3. **Dribble** is mapped to `move_to`; build a real dribble skill that
-   keeps the ball glued to the kicker.
-4. **`IntentReceive`** holds station — should reposition to the predicted
-   reception point once the pass play is wired.
-5. **Angular controller** in the adapter is a simple P-controller. If the
+3. **Angular controller** in the adapter is a simple P-controller. If the
    motion layer expects a target heading rather than `w`, push the
    conversion downstream and stop setting `w` here.
-6. **Snapshot per-tick allocation**: each tick currently builds a fresh
+4. **Snapshot per-tick allocation**: each tick currently builds a fresh
    `Snapshot` (frozen dataclass + tuple coercions). If this shows up in
    profiling, batch the conversion or expose `WorldModel` accessors that
    yield the underlying objects in-place.
+
+### Skill gaps
+
+5. **Dribble** is mapped to `move_to`; build a real dribble skill that
+   keeps the ball glued to the kicker.
+6. **`IntentReceive`** holds station — should reposition to the predicted
+   reception point once the pass play is wired.
+
+### Active BT bugs (observed on grSim + real robot)
+
+7. **Attacker: `POSSESSION_DIST` oscillation** — robot flickers between
+   possession and no-possession every few ticks, causing it to alternate
+   between orienting toward goal and chasing the ball. Needs hysteresis
+   (separate acquire/lose thresholds) and empirical tuning of
+   `POSSESSION_DIST` on the physical robot. See `future.md §0.1`.
+
+8. **Attacker: over-eager kicking** — `HasClearShot` fires `IntentKick`
+   whenever the shot corridor is geometrically clear, regardless of
+   distance or angle. Should gate on shot quality (distance + cone width)
+   and prefer dribbling when inside a "dribble zone". See `future.md §0.2`.
+
+9. **Attacker: no field boundary enforcement** — target positions can
+   exceed field lines when chasing a ball that has rolled out of play.
+   Needs a shared `clamp_to_field(pos, margin)` utility applied to all
+   `IntentMove` targets. See `future.md §0.3`.
+
+10. **Supporter: hardcoded position, no dynamic repositioning** — the
+    supporter always moves to `(1.0, 2.0)` and `IsBallComing` is stubbed
+    to always return FAILURE. A full redesign is planned (ball-chasing,
+    pass distribution, open-space positioning). See `future.md §0.4` for
+    the full node-by-node spec.
 
 ---
 
