@@ -21,7 +21,7 @@ from PySide6.QtGui import (QPainter, QPen, QBrush, QColor, QFont,
 from TeamControl.ui.theme import (FIELD_GREEN, FIELD_LINE, YELLOW_TEAM,
                                    BLUE_TEAM, BALL_COLOR, BG_DARK, ACCENT,
                                    ROLE_GOALIE, ROLE_ATTACKER, ROLE_SUPPORT,
-                                   ROLE_DEFENDER, TEXT)
+                                   ROLE_DEFENDER, TEXT, BG_PANEL, BG_MID, BORDER)
 from TeamControl.robot.constants import (
     CENTER_RADIUS as DEFAULT_CENTER_RADIUS,
     ROBOT_RADIUS,
@@ -81,7 +81,19 @@ class FieldCanvas(QWidget):
         # Placement state (set by sim panel)
         self._place_mode = None   # "ball", ("robot", id, yellow)
 
+        # Velocity overlay
+        self._show_velocity = False
+        self._vel_prev: dict = {}   # (team, id) -> (x, y, timestamp)
+        self._velocities: dict = {} # (team, id) -> (vx_mm_s, vy_mm_s)
+
+        # Zoom overlay (built last so it sits on top)
+        self._build_zoom_overlay()
+
     # ── Public API ────────────────────────────────────────────────
+
+    def set_show_velocity(self, enabled: bool):
+        self._show_velocity = enabled
+        self.update()
 
     def set_frame(self, snap):
         self._yellow = [r for r in snap.yellow if r is not None]
@@ -119,6 +131,63 @@ class FieldCanvas(QWidget):
             self.setCursor(Qt.CrossCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
+
+    # ── Zoom overlay ──────────────────────────────────────────────
+
+    def _build_zoom_overlay(self):
+        self._zoom_overlay = QWidget(self)
+        self._zoom_overlay.setStyleSheet(
+            f"QWidget {{ background: {BG_MID}; border: 1px solid {BORDER}; border-radius: 5px; }}"
+        )
+
+        lay = QHBoxLayout(self._zoom_overlay)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(4)
+
+        icon = QLabel("🔍")
+        icon.setStyleSheet(f"background: transparent; border: none; font-size: 14px; color: {TEXT};")
+        lay.addWidget(icon)
+
+        btn_style = (
+            f"QPushButton {{ background: {BG_PANEL}; color: {TEXT}; border: none;"
+            f" border-radius: 3px; font-size: 16px; font-weight: bold; padding: 0px; }}"
+            f"QPushButton:hover {{ background: {ACCENT}; color: white; }}"
+            f"QPushButton:pressed {{ background: {ACCENT}; color: white; }}"
+        )
+        for text, tip, slot in [
+            ("+", "Zoom In",     self._zoom_in),
+            ("-", "Zoom Out",    self._zoom_out),
+            ("↺", "Fit to View", self._zoom_fit),
+        ]:
+            btn = QPushButton(text)
+            btn.setFixedSize(32, 28)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(btn_style)
+            btn.clicked.connect(slot)
+            lay.addWidget(btn)
+
+        self._zoom_overlay.adjustSize()
+
+    def _zoom_in(self):
+        self._scale = min(5.0, self._scale * 1.2)
+        self.update()
+
+    def _zoom_out(self):
+        self._scale = max(0.2, self._scale * 0.8)
+        self.update()
+
+    def _zoom_fit(self):
+        self._scale = 1.0
+        self._offset = QPointF(0, 0)
+        self.update()
+
+    def resizeEvent(self, event: QResizeEvent):
+        super().resizeEvent(event)
+        self._zoom_overlay.adjustSize()
+        margin = 10
+        self._zoom_overlay.move(
+            self.width() - self._zoom_overlay.width() - margin, margin)
+        self._zoom_overlay.raise_()
 
     # ── Coordinate transforms ─────────────────────────────────────
 

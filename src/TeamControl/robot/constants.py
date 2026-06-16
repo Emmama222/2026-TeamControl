@@ -63,6 +63,21 @@ FIELD_MARGIN      = 300      # mm — generic clamp margin, not a field measurem
 
 # Tactical "how far back to defend" zone (team.py positioning heuristics) --
 # not an actual measured field feature, no field_config equivalent.
+
+# FIELD_LENGTH      = 4500
+# FIELD_WIDTH       = 2230
+# HALF_LEN          = FIELD_LENGTH / 2
+# HALF_WID          = FIELD_WIDTH / 2
+# GOAL_WIDTH        = 1000
+# GOAL_HW           = GOAL_WIDTH / 2
+# GOAL_DEPTH        = 180
+# POSSESS_DIST      = 0.14
+# PENALTY_DEPTH     = 500
+# PENALTY_WIDTH     = 1000
+# PENALTY_HW        = PENALTY_WIDTH / 2
+# CENTER_RADIUS     = 500
+# FIELD_MARGIN      = 300
+
 DEFENSE_DEPTH     = 1200
 DEFENSE_HALF_WIDTH = 1200
 

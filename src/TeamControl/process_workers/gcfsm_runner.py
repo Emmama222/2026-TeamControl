@@ -6,12 +6,14 @@ from TeamControl.process_workers.worker import BaseWorker
 from multiprocessing import Queue
 from enum import Enum,auto
 import time
+import time
 
 
 
 class GCfsm (BaseWorker):
     def __init__(self,is_running,logger):
         super().__init__(is_running,logger)
+
 
         self.last_ref_msg = None
         # state, command, event, stage
@@ -31,13 +33,15 @@ class GCfsm (BaseWorker):
         self.last_blf_location = None
         self.recv = GameControl(is_running=is_running)
 
+
     def setup(self,*args):
-        output_q, us_yellow, us_positive = args
+        output_q, us_yellow, us_positive, team_name = args
 
         self.output_q = output_q
         self.us_yellow = us_yellow
         self.us_positive = us_positive
-        self.logger.info (f"[GCP] : Setup Complete {self.output_q=}, {us_yellow=}, {us_positive=}")
+        self.team_name = team_name
+        self.logger.info (f"[GCP] : Setup Complete {self.output_q=}, {us_yellow=}, {us_positive=}, {team_name=}")
 
     def step(self):
         # listen from GameControl socket
@@ -91,14 +95,17 @@ class GCfsm (BaseWorker):
             # we need to update our active robot numbers
             update_numbers = True
 
+
         # check red cards in our Team
         red_cards = new_ref_msg.yellow.red_cards if self.us_yellow == True else new_ref_msg.blue.red_cards
         # check if there's number changes from the record
+        if self.red_cards != red_cards :
         if self.red_cards != red_cards :
             print(f"red card number changed : {red_cards}")
             self.red_cards = red_cards
             # update active robot *red card = permanently remove
             update_numbers = True
+
 
         # checking fouls in our team
         fouls = new_ref_msg.yellow.foul_counter if self.us_yellow == True else new_ref_msg.blue.foul_counter
@@ -107,12 +114,19 @@ class GCfsm (BaseWorker):
             self.fouls = fouls # 3 fouls = 1 yellow card
 
         if update_numbers is True :
+            self.fouls = fouls # 3 fouls = 1 yellow card
+
+        if update_numbers is True :
             self.update_robot_numbers()
+
 
     def update_robot_numbers(self):
         # robots away = how many we need to take out
+        # robots away = how many we need to take out
         robots_away = self.red_cards + self.yellow_card_active
         # check how many robots should be active now
+        robots_active =  self.max_robots - robots_away
+
         robots_active =  self.max_robots - robots_away
 
         if robots_active <= 0:
@@ -126,9 +140,8 @@ class GCfsm (BaseWorker):
             self.robots_active = robots_active
 
 
-
     def check_color_side(self,new_ref_msg:RefereeMessage):
-        our_team_name :str = "TurtleRabbit"
+        our_team_name :str = self.team_name
         us_positive:bool = None
         us_yellow:bool = None
 
@@ -137,12 +150,13 @@ class GCfsm (BaseWorker):
         elif new_ref_msg.blue.name == our_team_name:
             us_yellow = False
 
-        # self.update_cards()
-
+        # us_positive = True means WE ARE on the +x half (our goal at +x, attack toward -x).
+        # blue on +x → yellow on -x → us_positive=False for yellow.
+        # blue on -x → yellow on +x → us_positive=True for yellow.
         if new_ref_msg.blue_team_on_positive_half is None:
             pass
         elif new_ref_msg.blue_team_on_positive_half is True:
-            us_positive = False if  us_yellow == True else True
+            us_positive = False if us_yellow == True else True
         elif new_ref_msg.blue_team_on_positive_half is False:
             us_positive = True if  us_yellow == True else False
 
@@ -153,16 +167,21 @@ class GCfsm (BaseWorker):
             packet = (PacketType.SWITCH_TEAM, {"YELLOW" : self.us_yellow,"POSITIVE": self.us_positive})
             self.output_q.put_nowait(packet)
 
+
         elif self.us_yellow is None:
-            # warning log saying this is none
-            # raise AttributeError ("US YELLOW = NONE -> need our TeamName")
             return
+
+
 
 
     def check_state(self,new_ref_msg:RefereeMessage):
         self.update_state(new_ref_msg.command, new_ref_msg.stage)
         self.current_stage = new_ref_msg.stage
         self.current_command = new_ref_msg.command
+        # Forward ball placement target whenever it is present
+        if new_ref_msg.designated_position is not None:
+            pos = (new_ref_msg.designated_position.x, new_ref_msg.designated_position.y)
+            self.output_q.put_nowait((PacketType.BALL_PLACEMENT_POS, pos))
 
     def update_state(self,command,stage):
         if not isinstance(command,Command) or not isinstance(stage,Stage):
@@ -190,6 +209,10 @@ class GCfsm (BaseWorker):
 
         elif command == Command.FORCE_START:
             state = GameState.RUNNING
+        elif command == Command.PREPARE_PENALTY_YELLOW:
+            state = GameState.PREPARE_PENALTY if self.us_yellow is True else GameState.PREPARE_PENALTY_OPP
+        elif command == Command.PREPARE_PENALTY_BLUE:
+            state = GameState.PREPARE_PENALTY if self.us_yellow is False else GameState.PREPARE_PENALTY_OPP
         elif command in {Command.DIRECT_FREE_YELLOW, Command.INDIRECT_FREE_YELLOW}:
             state = GameState.OUR_FREE_KICK if self.us_yellow is True else GameState.ENEMY_FREE_KICK
         elif command in {Command.DIRECT_FREE_BLUE, Command.INDIRECT_FREE_BLUE}:
@@ -248,7 +271,6 @@ class GCfsm (BaseWorker):
 
     def check_game_events(self,new_ref_msg:RefereeMessage):
         game_events = new_ref_msg.game_events
-        location = None
         if len(game_events) == 0:
             return
 

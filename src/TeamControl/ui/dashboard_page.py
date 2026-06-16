@@ -17,6 +17,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 
 from TeamControl.ui.theme import (
+    ACCENT, TEXT_DIM, SUCCESS, WARNING, DANGER,
+    YELLOW_TEAM, BLUE_TEAM, BALL_COLOR, BORDER, BG_CARD, BG_DARK,
     ACCENT, TEXT_DIM, SUCCESS, WARNING, DANGER, TEXT,
     YELLOW_TEAM, BLUE_TEAM, BALL_COLOR,
 )

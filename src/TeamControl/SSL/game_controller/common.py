@@ -11,6 +11,8 @@ class PacketType(Enum): # for message sending onto gc_queue
     GC_STATUS = auto()
     SWITCH_TEAM = auto()
     BLF_LOCATION = auto()
+    BALL_PLACEMENT_POS = auto()  # designated_position from referee message
+    GC_STATUS = auto()           # full referee status snapshot
 
 class GameState(Enum):
     HALTED = auto()
