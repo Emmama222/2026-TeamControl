@@ -2,8 +2,10 @@
 
 `voronoi_navigator.py` was intentionally simplified to a **bare integrator** for
 troubleshooting the path planner.  The table below lists everything that was
-removed, why it matters, and where it should live when the production navigator
-is built.
+removed and why it mattered — all of it has since been re-added to the
+production game navigator, `src/TeamControl/robot/voronoi_game_navigator.py`
+(see "Where they live now" below); this doc is kept as the historical
+rationale for each piece.
 
 ---
 
@@ -26,31 +28,32 @@ defined in `src/TeamControl/robot/constants.py`.  The goalie config keys
 
 ---
 
-## Where to add them back
+## Where they live now
 
-All of these belong in a **game-layer navigator**, not in the integrator.
-The recommended location is a new file:
+All of these belong in the **game-layer navigator**, not the integrator, and
+all are implemented in `run_voronoi_game_navigator` (`voronoi_game_navigator.py`):
 
-```
-src/TeamControl/robot/voronoi_game_navigator.py
-```
-
-It would:
-
-1. Use the same `PlannerAPI` / `PlannerInput` loop as `voronoi_navigator.py`.
-2. Accept `is_goalie: bool` (from `preset.goalie_yellow_id` / `goalie_blue_id`
-   in `engine.py`) and apply the penalty-box guard.
-3. Call `_steal_ignore_keys` to optionally pass
+1. Uses the same `PlannerAPI` / `PlannerInput` loop as `voronoi_navigator.py`.
+2. Accepts `is_goalie: bool` (from `preset.goalie_yellow_id` / `goalie_blue_id`
+   in `engine.py`) and applies the penalty-box guard (`_clamp_out_of_own_box`).
+3. Calls `_steal_ignore_keys` to pass
    `ignored_obstacle_keys_containing_target` to the planner.
-4. Switch between `CHASE_SPEED` and `PRECISION_APPROACH_SPEED` based on
+4. Switches between `CHASE_SPEED` and `PRECISION_APPROACH_SPEED` based on
    `plan.endpoint_precision_mode`.
-5. Apply the face-target stop when within `FACE_TARGET_DIST_MM`.
-6. Apply the exponential smoothing on `vx / vy / w` before dispatch.
-7. ~~Use `sanitize_field_target`~~ — target sanitisation is now handled inside the planner itself.
+5. Applies the face-target stop when within `FACE_TARGET_DIST_MM`.
+6. Applies the exponential smoothing on `vx / vy / w` before dispatch.
+7. ~~Uses `sanitize_field_target`~~ — target sanitisation is now handled inside the planner itself; `voronoi_game_navigator.py` still calls it once more as a backstop around its own outside-of-field override (see source comments).
+8. **New since the integrator split**: ball-out-of-bounds clearance — when
+   `cache.ball.visible` goes `False` because the ball left the field
+   (`wm.last_ball_rejection_reason == "out_of_bounds"`), drives to a point
+   `>= OUT_OF_BOUNDS_CLEARANCE_MM` from both the ball's exit point
+   (`wm.possible_ball_left_field_pos_mm`) and the boundary line it crossed
+   (`ball_nav.compute_out_of_bounds_clearance`), instead of just stopping in
+   place like the integrator does.
 
 `engine.py` mode `"voronoi_test"` keeps using `run_voronoi_navigator` (the
-integrator).  A future `"match"` or `"team"` mode would use
-`run_voronoi_game_navigator` instead.
+integrator) for planner-only debugging.  Match/team play uses
+`run_voronoi_game_navigator`.
 
 ---
 
