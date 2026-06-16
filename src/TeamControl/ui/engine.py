@@ -32,6 +32,7 @@ from TeamControl.robot.goalie import run_goalie
 from TeamControl.robot.striker import run_striker
 from TeamControl.robot.navigator import run_navigator, WAYPOINTS_A, WAYPOINTS_B
 from TeamControl.robot.voronoi_navigator import run_voronoi_navigator
+from TeamControl.robot.voronoi_game_navigator import run_voronoi_game_navigator
 from TeamControl.robot.team import run_team
 from TeamControl.robot.coop import run_coop
 
@@ -62,6 +63,7 @@ class SimEngine(QObject):
         "calibration",
         "vision_only",
         "voronoi_test",
+        "match",
         "goalie",
         "1v1",
         "obstacle",
@@ -397,6 +399,33 @@ class SimEngine(QObject):
             self.log_message.emit(
                 "[engine] Voronoi test mode — running one yellow and one blue "
                 "robot through the live Voronoi planner")
+            return procs
+
+        if mode == "match":
+            us_y = preset.us_yellow
+            opp_y = not us_y
+            our_is_goalie = bool(
+                our_id == preset.goalie_yellow_id if us_y
+                else our_id == preset.goalie_blue_id
+            )
+            opp_is_goalie = bool(
+                opp_id == preset.goalie_yellow_id if opp_y
+                else opp_id == preset.goalie_blue_id
+            )
+            procs.append(Process(target=run_voronoi_game_navigator,
+                                 args=(ev, dq, wm, our_id, us_y,
+                                       self._planner_path_q),
+                                 kwargs=dict(is_goalie=our_is_goalie),
+                                 daemon=True))
+            procs.append(Process(target=run_voronoi_game_navigator,
+                                 args=(ev, dq, wm, opp_id, opp_y,
+                                       self._planner_path_q),
+                                 kwargs=dict(is_goalie=opp_is_goalie),
+                                 daemon=True))
+            self.log_message.emit(
+                "[engine] Match mode — running one yellow and one blue robot "
+                "through the full game navigator (penalty-box guard, steal, "
+                "precision approach, smoothing)")
             return procs
 
         if mode == "goalie":

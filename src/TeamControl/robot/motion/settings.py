@@ -4,6 +4,7 @@ import time
 
 from TeamControl.robot import constants as C
 from TeamControl.robot.motion.hardware import DEFAULT_HARDWARE_GAINS
+from TeamControl.robot.motion.wheel_kinematics import DEFAULT_WHEEL_SPEC
 
 _GAIN_KEYS = (
     "turn_kp",
@@ -15,6 +16,19 @@ _GAIN_KEYS = (
     "stop_overshoot_mm",
     "min_v",
     "min_w",
+    "wheel1_angle_deg",
+    "wheel2_angle_deg",
+    "wheel3_angle_deg",
+    "wheel4_angle_deg",
+    "wheel_radius_mm",
+    "robot_radius_mm",
+)
+
+# These two may be None ("not calibrated yet" -- isotropic limiter stays
+# active). Every key in _GAIN_KEYS above is always a plain float.
+_OPTIONAL_GAIN_KEYS = (
+    "max_wheel_speed_mps",
+    "max_wheel_accel_mps2",
 )
 
 
@@ -31,6 +45,7 @@ class PDSettingsStore:
             "linear_kd": C.LINEAR_KD,
         }
         gains.update(DEFAULT_HARDWARE_GAINS)
+        gains.update(DEFAULT_WHEEL_SPEC)
         return gains
 
     def _team_key(self, is_yellow):
@@ -74,6 +89,14 @@ class PDSettingsStore:
                 except (TypeError, ValueError):
                     pass
 
+        for key in _OPTIONAL_GAIN_KEYS:
+            if key in robot_gains:
+                value = robot_gains[key]
+                try:
+                    gains[key] = None if value is None else float(value)
+                except (TypeError, ValueError):
+                    pass
+
         return gains
 
     def has_robot_gains(self, robot_id, is_yellow) -> bool:
@@ -100,6 +123,11 @@ class PDSettingsStore:
         for key in _GAIN_KEYS:
             if key in gains:
                 saved[key] = float(gains[key])
+
+        for key in _OPTIONAL_GAIN_KEYS:
+            if key in gains:
+                value = gains[key]
+                saved[key] = None if value is None else float(value)
 
         if score is not None:
             saved["score"] = float(score)

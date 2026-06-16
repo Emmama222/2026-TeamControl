@@ -335,3 +335,48 @@ Increase `BLEND_DIST` if the robot spins too much during combined movement.
 
 Until these are built, treat this document as the movement design target, not
 as a fully integrated architecture.
+
+---
+
+## Calibration Logs
+
+PD auto-tune (`PDCalibration.auto_tune_turn` / `auto_tune_linear` in
+`pd_calibration.py`) writes a full per-candidate history for every sweep to
+`calibration_logs/<team>/<letter>/<timestamp>_<kind>_autotune.json` (see
+`robot/motion/calibration_log.py`). `movement_calibration.json` only ever
+keeps the latest winning gains, so this is the place to look if you need to
+see what a sweep actually tried.
+
+**Not yet done:** the hardware Auto-Calibrate / Speed Sweep flow in
+`ui/calibration_page.py` still logs into the flat `"runs"` array inside
+`calibration.json` instead of this per-robot folder. Migrating it to the
+same `calibration_logs/<team>/<letter>/` convention is a follow-up.
+
+---
+
+## Wheel-Aware Speed/Accel Limits
+
+`MAX_SPEED`/`MAX_W`/`LINEAR_AMAX`/`ANGULAR_AMAX` cap speed/acceleration as
+an isotropic circle — the same in every direction. The real robot (and
+grSim's own physics model, see `SSL/grSim/config_files/TurtleRabbit.ini`)
+is a 4-omniwheel robot with **asymmetric** wheel angles
+(60°/135°/225°/300°), so the true achievable envelope is direction-
+dependent. `robot/motion/wheel_kinematics.py` adds an opt-in wheel-aware
+limiter: enter a robot's wheel angles, wheel/robot radius, and measured
+max wheel speed/accel in the PD Calibration page's "Wheel Geometry" card,
+and `RobotMotionController` automatically switches that robot from the
+isotropic limiter to the true wheel-feasible envelope. Leaving
+`max_wheel_speed_mps`/`max_wheel_accel_mps2` at 0 (→ `None`) keeps a robot
+on the old isotropic behaviour — this is purely additive, nothing changes
+until those two are measured and entered.
+
+**Keeping grSim in sync (manual step):** this repo doesn't launch or
+control grSim (`harness/grSim_runner.py` only talks to an already-running
+instance over UDP), so there's no live sync. When a robot's wheel geometry
+changes, manually copy the same numbers into `TurtleRabbit.ini`
+(`wheel*_angle_deg` → `WheelXAngle`, `wheel_radius_mm` → `WheelRadius` in
+metres, `robot_radius_mm` → `Radius` in metres) and restart grSim, so the
+simulated physics matches what the limiter assumes. The newer
+`ssl_simulation_config.proto` (`RobotSpecs`/`SimulatorConfig`) could
+automate this via a live config channel, but its sender is commented out
+in `network/ssl_sockets.py` and wiring it up is out of scope for now.

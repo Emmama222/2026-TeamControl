@@ -13,7 +13,9 @@ Movement:
   - clamp              — value clamping
   - move_toward        — deceleration-ramp movement toward a local target
   - sanitize_field_target — offset out-of-field movement targets inward
+  - apply_boundary_braking — dynamic speed braking near/outside the field edge
   - rotation_compensate — pre-rotate velocity during turning
+  - wrap_angle         — wrap an angle into (-pi, pi]
 
 Pathfinding:
   - compute_arc_nav    — arc approach to get behind the ball
@@ -24,11 +26,19 @@ import math
 import os
 from typing import Tuple, Optional, List
 
+from TeamControl.robot import constants as C
 from TeamControl.robot.constants import (
     HALF_LEN, HALF_WID, ROBOT_RADIUS,
     FRICTION,
     BALL_HISTORY_SIZE,
     LOOP_RATE,
+)
+from TeamControl.world.field_config import (
+    VORONOI_BOUNDARY_DECEL_ZONE_MM,
+    VORONOI_BOUNDARY_HARD_STOP_MM,
+    VORONOI_BOUNDARY_NEAR_SPEED_SCALE,
+    VORONOI_OUT_OF_FIELD_SPEED_SCALE,
+    get_live_bounds,
 )
 
 
