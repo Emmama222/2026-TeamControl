@@ -26,32 +26,65 @@ from TeamControl.world.transform_cords import world2robot
 from TeamControl.robot.ball_nav import sanitize_field_target
 from TeamControl.robot.ball_nav import compute_arc_nav, predict_ball as _predict_ball
 from TeamControl.robot.constants import (
-    FIELD_LENGTH, FIELD_WIDTH, HALF_LEN, HALF_WID,
-    GOAL_WIDTH, GOAL_HW, GOAL_DEPTH,
-    PENALTY_DEPTH, PENALTY_HW,
     DEFENSE_DEPTH, DEFENSE_HALF_WIDTH,
     MAX_W, TURN_GAIN,
     KICK_RANGE, BALL_NEAR, BEHIND_DIST, AVOID_RADIUS,
     FRICTION, INTERCEPT_STEPS,
     PRESSURE_DIST, KICK_COOLDOWN, BALL_HISTORY_SIZE,
-    MAX_ADVANCE, SHOT_SPEED, CLEAR_BALL_SPEED, CLEAR_BALL_DIST,
+    SHOT_SPEED, CLEAR_BALL_SPEED, CLEAR_BALL_DIST,
     LOOP_RATE, FRAME_INTERVAL,
+)
+from TeamControl.world.field_config import (
+    get_live_half_length,
+    get_live_half_width,
+    get_live_goal_half_width,
+    get_live_goal_depth,
+    get_live_penalty_depth,
+    get_live_penalty_half_width,
+    get_live_max_advance,
 )
 
 # ════════════════════════════════════════════════════════════════════
 #  ALIASES (team.py naming convention → central constants)
 # ════════════════════════════════════════════════════════════════════
 
-FIELD_LEN    = FIELD_LENGTH
-FIELD_WID    = FIELD_WIDTH
-GOAL_W       = GOAL_WIDTH
+# Functions, not plain values: field geometry is live (field_config.py) and
+# these need to re-resolve on every call, not freeze at this module's
+# import time.
+def FIELD_LEN():
+    return get_live_half_length() * 2.0
+
+
+def FIELD_WID():
+    return get_live_half_width() * 2.0
+
+
+def GOAL_HW():
+    return get_live_goal_half_width()
+
+
+def GOAL_DEPTH():
+    return get_live_goal_depth()
+
+
+def PENALTY_DEPTH():
+    return get_live_penalty_depth()
+
+
+def PENALTY_HW():
+    return get_live_penalty_half_width()
+
+
+def GK_MAX_ADV():
+    return get_live_max_advance()
+
+
 DEF_DEPTH    = DEFENSE_DEPTH
 DEF_HW       = DEFENSE_HALF_WIDTH
 AVOID_R      = AVOID_RADIUS
 LOOP_DT      = LOOP_RATE
 FRAME_DT     = FRAME_INTERVAL
 BHIST_N      = BALL_HISTORY_SIZE
-GK_MAX_ADV   = MAX_ADVANCE
 GK_SHOT_SPEED  = int(SHOT_SPEED)
 GK_CLEAR_SPEED = int(CLEAR_BALL_SPEED)
 GK_CLEAR_DIST  = int(CLEAR_BALL_DIST)
@@ -174,12 +207,12 @@ def _in_def(x, y, gx):
 
 def _in_penalty(x, y, gx):
     """True if (x, y) is inside the penalty box around goal at gx."""
-    return abs(x - gx) < PENALTY_DEPTH and abs(y) < PENALTY_HW
+    return abs(x - gx) < PENALTY_DEPTH() and abs(y) < PENALTY_HW()
 
 
 def _field_clamp(x, y):
-    return (_cl(x, -HALF_LEN + FIELD_MARGIN, HALF_LEN - FIELD_MARGIN),
-            _cl(y, -HALF_WID + FIELD_MARGIN, HALF_WID - FIELD_MARGIN))
+    return (_cl(x, -get_live_half_length() + FIELD_MARGIN, get_live_half_length() - FIELD_MARGIN),
+            _cl(y, -get_live_half_width() + FIELD_MARGIN, get_live_half_width() - FIELD_MARGIN))
 
 
 def _push_out(x, y, gx, margin=DEF_MARGIN):
@@ -205,10 +238,10 @@ def _gk_clamp(x, y, gx):
     """Clamp goalie position to stay inside the penalty box."""
     margin = 50
     if gx > 0:
-        x = _cl(x, gx - PENALTY_DEPTH + margin, gx - margin)
+        x = _cl(x, gx - PENALTY_DEPTH() + margin, gx - margin)
     else:
-        x = _cl(x, gx + margin, gx + PENALTY_DEPTH - margin)
-    return x, _cl(y, -PENALTY_HW + margin, PENALTY_HW - margin)
+        x = _cl(x, gx + margin, gx + PENALTY_DEPTH() - margin)
+    return x, _cl(y, -PENALTY_HW() + margin, PENALTY_HW() - margin)
 
 
 def _safe_pos(x, y, our_gx, opp_gx):
@@ -287,7 +320,7 @@ def _shot_score(pos, opp_gx, opps, gk_pos):
         return 0.0
     dx = max(dx, 100)
 
-    angle = 2.0 * math.atan2(GOAL_HW, dx)
+    angle = 2.0 * math.atan2(GOAL_HW(), dx)
     angle_s = min(angle / math.radians(30), 1.0)
     dist_s = max(0.0, 1.0 - dx / MAX_SHOT_DIST)
 
@@ -311,7 +344,7 @@ def _pass_score(ball, recv, opps, opp_gx):
     if not _pass_safe(ball, recv, opps):
         return 0.0
     d = _dist(ball, recv)
-    if d < 450 or d > FIELD_LEN * 1.1:
+    if d < 450 or d > FIELD_LEN() * 1.1:
         return 0.0
 
     dist_s = 1.0 if 800 < d < 3500 else 0.40
@@ -334,13 +367,13 @@ def _through_ball_score(ball, mate_pos, mate_vel_est, opps, opp_gx):
     # Target: ahead of teammate in attacking direction
     lead_x = mate_pos[0] + atk * THROUGH_LEAD
     lead_y = mate_pos[1] * 0.8  # drift toward center
-    lead = _safe_pos(lead_x, lead_y, -HALF_LEN, HALF_LEN)
+    lead = _safe_pos(lead_x, lead_y, -get_live_half_length(), get_live_half_length())
 
     if not _pass_safe(ball, lead, opps, PASS_LANE_CLR * 0.9):
         return 0.0, None
 
     d = _dist(ball, lead)
-    if d < 600 or d > FIELD_LEN:
+    if d < 600 or d > FIELD_LEN():
         return 0.0, None
 
     # Bonus for advancing position
@@ -361,8 +394,8 @@ def _pick_shot_target(ball, opp_gx, gk_pos):
     # Aim past the goal line into the net so the ball enters through the
     # open face, not into the side walls of the [ shaped goal.
     aim_inward = 1 if opp_gx > 0 else -1
-    aim_x = opp_gx + aim_inward * (GOAL_DEPTH * 0.5)
-    h = GOAL_HW * 0.35
+    aim_x = opp_gx + aim_inward * (GOAL_DEPTH() * 0.5)
+    h = GOAL_HW() * 0.35
     if gk_pos:
         return (aim_x, -h) if gk_pos[1] > 0 else (aim_x, h)
     return (aim_x, -h * 0.6) if ball[1] > 0 else (aim_x, h * 0.6)
@@ -468,7 +501,7 @@ def _split_field(ball, our, gk, winner, our_gx, opp_gx, poss_state):
     if not fids:
         return [], []
     adv = (ball[0] - our_gx) * atk
-    ratio = adv / FIELD_LEN
+    ratio = adv / FIELD_LEN()
 
     if poss_state == 'COUNTER':
         n_sup = min(3, len(fids))  # Everyone forward on counter!
@@ -552,11 +585,11 @@ def _support_targets(ball, our, opps, our_gx, opp_gx, sids, winner, poss_state):
 
         if 1600 < db < 3500:
             s += 3.0
-        elif 1000 < db < FIELD_LEN * 0.5:
+        elif 1000 < db < FIELD_LEN() * 0.5:
             s += 1.2
 
         # Reward positions that advance toward opponent goal
-        s += max(0, 1 - abs(cx - opp_gx) / (FIELD_LEN * 0.6)) * 2.5
+        s += max(0, 1 - abs(cx - opp_gx) / (FIELD_LEN() * 0.6)) * 2.5
 
         # Counter-attack bonus for very forward positions
         if poss_state == 'COUNTER':
@@ -620,7 +653,7 @@ def _defender_targets(ball, our, opps, our_gx, opp_gx, dids, we_have, poss_state
     # ── Coordinated pressing ──────────────────────────────────
     press_ids = []
     if poss_state == 'DEFEND' and dids:
-        ball_advance = (ball[0] - our_gx) * atk / FIELD_LEN
+        ball_advance = (ball[0] - our_gx) * atk / FIELD_LEN()
         if ball_advance > PRESS_ZONE:
             # Ball in opponent's territory — press aggressively
             sorted_by_ball = sorted(dids, key=lambda r: _dist(our[r], ball))
@@ -653,7 +686,7 @@ def _defender_targets(ball, our, opps, our_gx, opp_gx, dids, we_have, poss_state
         for j, (ox, oy) in enumerate(sorted_opp):
             if j in used:
                 continue
-            if _dist((ox, oy), ball) > FIELD_LEN * 0.7:
+            if _dist((ox, oy), ball) > FIELD_LEN() * 0.7:
                 continue
             mx = ox + (our_gx - ox) * DEFEND_MARK_RATIO
             my = oy * 0.60
@@ -715,8 +748,8 @@ def _attacker(rid, rpos, ball, bvel, our, opps, our_gx, opp_gx, gk_pos,
     for gx in (our_gx, opp_gx):
         if _in_penalty(ball[0], ball[1], gx):
             inw = -1 if gx > 0 else 1
-            wait = (gx + inw * (PENALTY_DEPTH + 120),
-                    _cl(ball[1], -PENALTY_HW, PENALTY_HW))
+            wait = (gx + inw * (PENALTY_DEPTH() + 120),
+                    _cl(ball[1], -PENALTY_HW(), PENALTY_HW()))
             return _cmd(rid, rpos, wait, ball, SPD_CRUISE, 0, 0, yellow), None
 
     # Evaluate options
@@ -872,8 +905,8 @@ def _goalie(rid, rpos, ball, bvel, bspeed, opps, our, our_gx, opp_gx,
         tc = (our_gx - ball[0]) / bvel[0]
         if 0 < tc < 2.0:
             py = ball[1] + bvel[1] * tc
-            if abs(py) < GOAL_HW + 250:
-                shot, pred_y = True, _cl(py, -GOAL_HW, GOAL_HW)
+            if abs(py) < GOAL_HW() + 250:
+                shot, pred_y = True, _cl(py, -GOAL_HW(), GOAL_HW())
 
         # Wall bounce check
         if not shot and bspeed > GK_SHOT_SPEED * 1.2:
@@ -883,11 +916,11 @@ def _goalie(rid, rpos, ball, bvel, bspeed, opps, our, our_gx, opp_gx,
             while t < 2.0:
                 bx += vx * 0.01
                 by += vy * 0.01
-                if by > HALF_WID:
-                    by = 2 * HALF_WID - by
+                if by > get_live_half_width():
+                    by = 2 * get_live_half_width() - by
                     vy = -vy
-                elif by < -HALF_WID:
-                    by = -2 * HALF_WID - by
+                elif by < -get_live_half_width():
+                    by = -2 * get_live_half_width() - by
                     vy = -vy
                 f = max(1.0 - FRICTION * 0.01, 0.0)
                 vx *= f
@@ -896,12 +929,12 @@ def _goalie(rid, rpos, ball, bvel, bspeed, opps, our, our_gx, opp_gx,
                 if math.hypot(vx, vy) < 40:
                     break
                 if sign > 0 and bx >= our_gx:
-                    if abs(by) < GOAL_HW + 200:
-                        shot, pred_y = True, _cl(by, -GOAL_HW, GOAL_HW)
+                    if abs(by) < GOAL_HW() + 200:
+                        shot, pred_y = True, _cl(by, -GOAL_HW(), GOAL_HW())
                     break
                 elif sign < 0 and bx <= our_gx:
-                    if abs(by) < GOAL_HW + 200:
-                        shot, pred_y = True, _cl(by, -GOAL_HW, GOAL_HW)
+                    if abs(by) < GOAL_HW() + 200:
+                        shot, pred_y = True, _cl(by, -GOAL_HW(), GOAL_HW())
                     break
 
     in_box = _in_def(ball[0], ball[1], our_gx)
@@ -920,7 +953,7 @@ def _goalie(rid, rpos, ball, bvel, bspeed, opps, our, our_gx, opp_gx,
                     continue
                 if not _pass_safe(ball, tp, opps, margin=GK_PASS_CLR):
                     continue
-                sc = abs(tp[0] - our_gx) / FIELD_LEN
+                sc = abs(tp[0] - our_gx) / FIELD_LEN()
                 # Bonus for teammates with space
                 nearest_opp = min((_dist(tp, o) for o in opps), default=9999)
                 if nearest_opp > 600:
@@ -935,7 +968,7 @@ def _goalie(rid, rpos, ball, bvel, bspeed, opps, our, our_gx, opp_gx,
                 else:
                     drib, face = 1, best_tgt
             else:
-                side_y = HALF_WID if ball[1] > 0 else -HALF_WID
+                side_y = get_live_half_width() if ball[1] > 0 else -get_live_half_width()
                 outward = -1 if our_gx > 0 else 1
                 clr = (ball[0] + outward * 1500, side_y)
                 rc = world2robot(rpos, clr)
@@ -959,13 +992,13 @@ def _goalie(rid, rpos, ball, bvel, bspeed, opps, our, our_gx, opp_gx,
         gd = math.hypot(gx, gy)
         bd = abs(ball[0] - our_gx)
         if gd > 1:
-            ratio = 1.0 - _cl(bd / (FIELD_LEN * 0.5), 0, 1)
+            ratio = 1.0 - _cl(bd / (FIELD_LEN() * 0.5), 0, 1)
             if bd < GK_DANGER:
                 ratio = min(1.0, ratio * 1.5)
-            adv = ratio * GK_MAX_ADV
+            adv = ratio * GK_MAX_ADV()
             tx = our_gx + (gx / gd) * adv
             ty = (gy / gd) * adv
-            ty = _cl(ty, -(GOAL_HW + 200), GOAL_HW + 200)
+            ty = _cl(ty, -(GOAL_HW() + 200), GOAL_HW() + 200)
             target = _gk_clamp(tx, ty, our_gx)
         else:
             target = _gk_clamp(our_gx, 0, our_gx)
@@ -1064,11 +1097,11 @@ def run_team(is_running, dispatch_q, wm, is_yellow, goalie_id=0):
             usp = True
 
         if is_yellow:
-            our_gx = HALF_LEN if usp else -HALF_LEN
-            opp_gx = -HALF_LEN if usp else HALF_LEN
+            our_gx = get_live_half_length() if usp else -get_live_half_length()
+            opp_gx = -get_live_half_length() if usp else get_live_half_length()
         else:
-            our_gx = -HALF_LEN if usp else HALF_LEN
-            opp_gx = HALF_LEN if usp else -HALF_LEN
+            our_gx = -get_live_half_length() if usp else get_live_half_length()
+            opp_gx = get_live_half_length() if usp else -get_live_half_length()
 
         # Opponent goalie
         gk_opp = None

@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from time import perf_counter
 
+from TeamControl.world.field_config import (
+    VORONOI_HORIZON_MS,
+    VORONOI_OBSTACLE_COST_WEIGHT,
+    VORONOI_RENDER_DENSITY_PERCENT,
+    VORONOI_RENDER_MAX_DENSITY_NODES,
+)
 from TeamControl.world.map.renderer import RenderLayer
 from TeamControl.world.map.voronoi_generator import (
     BoundedVoronoiMap,
@@ -23,10 +29,10 @@ def build_voronoi_overlay(
     world_map,
     *,
     now_s: float | None = None,
-    horizon_ms: int | float = 250,
-    density_percent: float = 10.0,
-    max_density_nodes: int = 80,
-    obstacle_cost_weight: float = 2.0,
+    horizon_ms: int | float = VORONOI_HORIZON_MS,
+    density_percent: float = VORONOI_RENDER_DENSITY_PERCENT,
+    max_density_nodes: int = VORONOI_RENDER_MAX_DENSITY_NODES,
+    obstacle_cost_weight: float = VORONOI_OBSTACLE_COST_WEIGHT,
     ignore_robots: set[tuple[bool, int]] | None = None,
 ) -> VoronoiOverlay:
     """Build a hidden-by-default Voronoi render layer and measure its cost."""

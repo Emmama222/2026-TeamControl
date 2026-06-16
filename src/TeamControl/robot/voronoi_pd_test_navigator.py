@@ -1,4 +1,15 @@
-"""Simple integrator that exercises the Voronoi/Dijkstra planner."""
+"""Planner + PD integration test -- single robot, RobotMotionController.
+
+RobotMotionController (motion/controller.py) has no live gameplay caller --
+only the PD calibration harness exercises it. This file is the live test
+path for its rule set (field-size cache, stay_in_field/penalty-box/goal-
+post, never-overshoot regulation, angular wheel-budget cap, ...): same
+PlannerAPI/PlannerInput/TickCache loop shape as voronoi_navigator.py, but
+driven by `get_motion_controller(...)` + `rotational_motion`/
+`translational_motion(..., stay_in_field=True)` (Option A sequential, the
+documented default) instead of ball_nav. Single robot only -- this is a
+test path, not the production game navigator (that's voronoi_game_navigator.py).
+"""
 
 from __future__ import annotations
 
@@ -8,30 +19,13 @@ import time
 from TeamControl.cache import TickCache
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.planner import PlannerAPI, PlannerInput
-from TeamControl.robot.ball_nav import (
-    apply_boundary_braking,
-    clamp,
-    move_toward,
-    rotation_compensate,
-)
-from TeamControl.robot.constants import (
-    CRUISE_SPEED,
-    FACE_TARGET_ANGLE_RAD,
-    FACE_TARGET_DIST_MM,
-    LOOP_RATE,
-    MAX_W,
-    TURN_GAIN,
-)
+from TeamControl.robot.constants import LOOP_RATE
+from TeamControl.robot.motion import get_motion_controller
 from TeamControl.world.field_config import (
-    VORONOI_CHASE_SPEED_SCALE,
     VORONOI_DENSITY_PERCENT,
     VORONOI_FIELD_TARGET_MARGIN_MM,
     VORONOI_HORIZON_MS,
     VORONOI_MAX_DENSITY_NODES,
-    VORONOI_POSSESSION_ANGLE_RAD,
-    VORONOI_POSSESSION_DIST_MM,
-    VORONOI_STEAL_FRONT_ANGLE_RAD,
-    VORONOI_STEAL_FRONT_DIST_MM,
     VORONOI_TARGET_OFFSET_MM,
     VORONOI_WAYPOINT_REACHED_MM,
     get_live_bounds,
@@ -39,11 +33,7 @@ from TeamControl.world.field_config import (
 from TeamControl.world.transform_cords import world2robot
 
 
-CHASE_SPEED = CRUISE_SPEED * VORONOI_CHASE_SPEED_SCALE
-WAYPOINT_REACHED_MM = VORONOI_WAYPOINT_REACHED_MM
-
-
-def run_voronoi_navigator(
+def run_pd_planner_test(
     is_running,
     dispatch_q,
     wm,
@@ -51,12 +41,13 @@ def run_voronoi_navigator(
     is_yellow,
     planner_path_q=None,
 ):
-    """Chase the ball using Voronoi/Dijkstra waypoints."""
+    """Chase the ball using Voronoi/Dijkstra waypoints, driven by PD."""
     cache = TickCache(wm)
     planner = PlannerAPI(
         density_percent=VORONOI_DENSITY_PERCENT,
         max_density_nodes=VORONOI_MAX_DENSITY_NODES,
     )
+    motion = get_motion_controller(robot_id, is_yellow)
     active_target = None
 
     while is_running.is_set():
@@ -80,7 +71,7 @@ def run_voronoi_navigator(
         reached = (
             active_target is not None
             and math.hypot(active_target[0] - rpos[0], active_target[1] - rpos[1])
-            <= WAYPOINT_REACHED_MM
+            <= VORONOI_WAYPOINT_REACHED_MM
         )
 
         try:
@@ -126,7 +117,7 @@ def run_voronoi_navigator(
 
         # If outside the field, drive to the nearest point that is still
         # VORONOI_FIELD_TARGET_MARGIN_MM inside the boundary.
-        # apply_boundary_braking() applies the out-of-field speed scale below.
+        # translational_motion(stay_in_field=True) handles the rest.
         _m = VORONOI_FIELD_TARGET_MARGIN_MM
         movement_target = (
             (max(x_min + _m, min(x_max - _m, rx)),
@@ -135,30 +126,33 @@ def run_voronoi_navigator(
         )
 
         rel_ball = world2robot(rpos, ball)
-
-        rel_target = world2robot(rpos, movement_target)
-        nav_vx, nav_vy = move_toward(rel_target, CHASE_SPEED)
-        nav_vx, nav_vy = apply_boundary_braking(rpos, nav_vx, nav_vy)
-
         dist_to_ball = math.hypot(rel_ball[0], rel_ball[1])
         ang_ball = math.atan2(rel_ball[1], rel_ball[0])
+        target_theta = rpos[2] + ang_ball  # face the ball
+
+        deadline = time.monotonic() + 0.5
+
+        # Option A sequential (documented default): turn to face the ball
+        # first if not roughly facing it, otherwise drive toward the
+        # planner's waypoint.
+        if not motion.is_facing_dir(rpos[2], target_theta):
+            w = motion.rotational_motion(rpos[2], target_theta, deadline)
+            vx, vy = 0.0, 0.0
+        else:
+            w = 0.0
+            vx, vy = motion.translational_motion(
+                rpos, movement_target, deadline, stay_in_field=True
+            )
 
         # Stop once within VORONOI_TARGET_OFFSET_MM of the ball.
         if dist_to_ball < VORONOI_TARGET_OFFSET_MM:
-            nav_vx, nav_vy = 0.0, 0.0
+            vx, vy = 0.0, 0.0
 
-        # Face the ball before moving when within dribble range.
-        if dist_to_ball < FACE_TARGET_DIST_MM and abs(ang_ball) > FACE_TARGET_ANGLE_RAD:
-            nav_vx, nav_vy = 0.0, 0.0
-
-        w = 0.0 if abs(ang_ball) < 0.05 else clamp(ang_ball * TURN_GAIN, -MAX_W, MAX_W)
-
-        out_vx, out_vy = rotation_compensate(nav_vx, nav_vy, w)
         dispatch_q.put((
             RobotCommand(
                 robot_id=robot_id,
-                vx=out_vx,
-                vy=out_vy,
+                vx=vx,
+                vy=vy,
                 w=w,
                 kick=0,
                 dribble=0,
@@ -213,41 +207,3 @@ def _send_stop(dispatch_q, robot_id: int, is_yellow: bool) -> None:
         ),
         0.15,
     ))
-
-
-def _robot_is_in_front_of_possessor(robot_pose, possessor_pose) -> bool:
-    rel = world2robot(possessor_pose, robot_pose[:2])
-    dist = math.hypot(rel[0], rel[1])
-    angle = math.atan2(rel[1], rel[0])
-    return (
-        rel[0] > 0.0
-        and dist <= VORONOI_STEAL_FRONT_DIST_MM
-        and abs(angle) <= VORONOI_STEAL_FRONT_ANGLE_RAD
-    )
-
-
-def _steal_ignore_keys(
-    cache,
-    *,
-    is_yellow: bool,
-    robot_id: int,
-    robot_pose,
-    ball_pos,
-):
-    keys = []
-    opponent_is_yellow = not bool(is_yellow)
-    for opponent_id, opponent_pose in cache.robots.iter_team(opponent_is_yellow):
-        if opponent_is_yellow == bool(is_yellow) and int(opponent_id) == int(robot_id):
-            continue
-        _, dist_to_ball, angle_to_ball = cache.robots.relative_to_ball(
-            opponent_is_yellow,
-            opponent_id,
-            ball_pos,
-        )
-        if (
-            dist_to_ball < VORONOI_POSSESSION_DIST_MM
-            and abs(angle_to_ball) <= VORONOI_POSSESSION_ANGLE_RAD
-            and _robot_is_in_front_of_possessor(robot_pose, opponent_pose)
-        ):
-            keys.append((opponent_is_yellow, int(opponent_id)))
-    return tuple(keys)

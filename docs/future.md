@@ -119,11 +119,18 @@ Everything below is **software/AI/decision-making only** — no hardware or netw
 ## 7. Voronoi Planner Integration
 
 ### Current state
-- **Complete Voronoi planner exists** (`voronoi_planner/`) with Dijkstra pathfinding, obstacle inflation, field boundary handling
-- **Completely unused** by any part of the main AI
-- Test/demo code only
+- **Current planner API exists** in `src/TeamControl/planner/` with
+  `PlannerAPI`, `PlannerInput`, waypoint caching, direct-path checks, and
+  Dijkstra routing over the bounded Voronoi map.
+- **`voronoi_test` uses it** through `src/TeamControl/robot/voronoi_navigator.py`
+  to chase the ball by waypoint.
+- **Legacy code still exists** in `src/TeamControl/voronoi_planner/`; treat that
+  package as old/experimental unless it is explicitly revived.
 
 ### Improvements
+- **Broader behaviour integration**: Wire `PlannerAPI` into normal striker,
+  goalie, team, and future skill-intent flows where obstacle-aware routing is
+  needed.
 - **Passing lane validation**: Use Voronoi edges to find the safest passing corridors. A pass is safe if it travels near a Voronoi edge (maximum distance from all obstacles).
 - **Territory control**: Voronoi cells show which robot "owns" which area of the field. Use for role assignment — the robot whose Voronoi cell contains the ball is the natural winner.
 - **Gap detection**: Large Voronoi cells in the opponent defense indicate exploitable gaps. Direct attacks there.
@@ -233,11 +240,15 @@ Everything below is **software/AI/decision-making only** — no hardware or netw
 - **Single ball physics module**: One `ball_predict(pos, vel, dt)` function used everywhere.
 - **Deprecate Movement.py**: Everything useful is in path_planner.py. Remove the dead code.
 - **Fix or remove time_to_intercept.py**: Broken imports, not used anywhere.
-- **Integrate or archive Voronoi planner**: Either wire it into team.py or move it to an `experimental/` folder so it's not confusing.
+- **Archive legacy Voronoi planner**: Keep `src/TeamControl/planner/` as the
+  supported planner path and move or clearly label `src/TeamControl/voronoi_planner/`.
 - **Fix Formation imports**: Relative imports so the package actually works.
 - **Type hints everywhere**: All function signatures should have type annotations. Catches bugs early.
 - **Structured logging**: Replace `print()` statements with proper leveled logging. Enable per-module log levels.
-- **Configuration validation**: Constants.py should validate ranges (speeds > 0, distances > 0, gains in [0, 10], etc.).
+- **Configuration validation**: `robot/constants.py` and
+  `world/field_config.py` should validate ranges (speeds > 0, distances > 0,
+  gains in [0, 10], Voronoi clearances/insets do not collapse the field, render
+  density stays within a UI-safe range, etc.).
 
 ---
 
@@ -245,7 +256,10 @@ Everything below is **software/AI/decision-making only** — no hardware or netw
 
 ### Current state
 - Decision loop runs at ~60Hz (16ms per tick)
-- Voronoi planner (if enabled) would be expensive per-frame
+- `PlannerAPI` is enabled in `voronoi_test`; it avoids Dijkstra when the direct
+  path is free and reuses cached waypoints when still valid.
+- The UI's full Voronoi debug overlay is generated in `WorldMapRenderWorker`,
+  separate from the robot planner API.
 - No spatial indexing for nearest-robot queries
 - No caching of expensive computations
 

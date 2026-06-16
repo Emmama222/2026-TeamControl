@@ -5,6 +5,23 @@ from typing import Iterable, Optional
 
 from TeamControl.world.map.geometry import linear_velocity
 from TeamControl.world.map.obstacles import Obstacle,ROBOT_RADIUS_MM
+from TeamControl.world.field_config import (
+    DEFENCE_X_MM,
+    DEFENCE_Y_MM,
+    FIELD_X_MAX,
+    FIELD_X_MIN,
+    FIELD_Y_MAX,
+    FIELD_Y_MIN,
+    GOAL_DEPTH_MM,
+    GOAL_HALF_WIDTH_MM,
+    VORONOI_HORIZON_MS,
+    VORONOI_OBSTACLE_COST_WEIGHT,
+    VORONOI_RENDER_DENSITY_PERCENT,
+    VORONOI_RENDER_MAX_DENSITY_NODES,
+    get_live_bounds,
+    update_live_bounds,
+    update_live_defence,
+)
 
 
 R = ROBOT_RADIUS_MM   # mm - robot radius
@@ -62,6 +79,17 @@ class WorldMap:
     # -------------------------
     def _create_field(self, field) -> None:
         self.field = field
+        update_live_bounds(float(field.field_length), float(field.field_width))
+        pen_depth = getattr(field, "penalty_area_depth", None)
+        pen_width = getattr(field, "penalty_area_width", None)
+        goal_w = getattr(field, "goal_width", None)
+        goal_d = getattr(field, "goal_depth", None)
+        update_live_defence(
+            float(pen_depth) if pen_depth is not None else float(DEFENCE_X_MM),
+            float(pen_width) if pen_width is not None else float(DEFENCE_Y_MM) * 2.0,
+            float(goal_w) if goal_w is not None else float(GOAL_HALF_WIDTH_MM) * 2.0,
+            float(goal_d) if goal_d is not None else float(GOAL_DEPTH_MM),
+        )
 
     def _extract_from_snap(self, snapshot, received_at_s: float) -> None:
         timestamp = float(snapshot.timestamp)
@@ -221,7 +249,10 @@ class WorldMap:
 
     def _is_ball_in_field(self, position: tuple[float, float]) -> bool:
         if self.field is None:
-            return True
+            return (
+                FIELD_X_MIN <= position[0] <= FIELD_X_MAX
+                and FIELD_Y_MIN <= position[1] <= FIELD_Y_MAX
+            )
         half_length = self.field.field_length / 2.0
         half_width = self.field.field_width / 2.0
         return (
@@ -248,12 +279,12 @@ class WorldMap:
     def get_render_data(
         self,
         now_s=None,
-        horizon_ms=250,
+        horizon_ms=VORONOI_HORIZON_MS,
         extra_layers=(),
         include_voronoi=False,
-        voronoi_density_percent=10.0,
-        voronoi_max_density_nodes=80,
-        voronoi_obstacle_cost_weight=2.0,
+        voronoi_density_percent=VORONOI_RENDER_DENSITY_PERCENT,
+        voronoi_max_density_nodes=VORONOI_RENDER_MAX_DENSITY_NODES,
+        voronoi_obstacle_cost_weight=VORONOI_OBSTACLE_COST_WEIGHT,
     ):
         """Return serializable, toggleable layers for a debug renderer."""
         from TeamControl.world.map.renderer import Renderer
@@ -336,9 +367,13 @@ class WorldMap:
         if ignore_robots is None:
             ignore_robots = set()
 
+        x_min, x_max, y_min, y_max = get_live_bounds()
         planning_obstacles = []
         for obs in self.obs:
             if (obs.isYellow, obs.robot_id) in ignore_robots:
+                continue
+            px, py = obs.pos_mm[0], obs.pos_mm[1]
+            if not (x_min <= px <= x_max and y_min <= py <= y_max):
                 continue
             age_ms = obs.age_s(now_s) * 1000.0
             prediction_horizon_ms = age_ms + horizon_ms

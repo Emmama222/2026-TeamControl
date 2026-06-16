@@ -11,8 +11,8 @@ That keeps the same tests usable for grSim and real robots.
 
 import math
 import time
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Callable, Optional
 
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.robot.motion.controller import RobotMotionController
@@ -40,6 +40,15 @@ class CalibrationResult:
     max_position_error_mm: float
     max_heading_error_rad: float
     samples: int
+
+
+@dataclass
+class AutoTuneResult:
+    """Outcome of a coarse-to-fine grid sweep over one (kp, kd) gain pair."""
+    gains: dict
+    best_result: CalibrationResult
+    tried: list[tuple[dict, CalibrationResult]] = field(default_factory=list)
+    log: list[str] = field(default_factory=list)
 
 
 class PDCalibration:
@@ -245,3 +254,173 @@ class PDCalibration:
         Save gains to settings store using the result score.
         """
         return self.motion.calibrate(gains, score=result.score)
+
+    # ════════════════════════════════════════════════════════════════
+    #  AUTO-TUNE — coarse-to-fine grid sweep over one (kp, kd) pair
+    # ════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _best(tried: list[tuple[dict, CalibrationResult]]) -> tuple[dict, CalibrationResult]:
+        """Pick the candidate with the lowest score (lower is better)."""
+        gains, result = min(tried, key=lambda t: t[1].score)
+        return gains, result
+
+    @staticmethod
+    def _narrow(center: float, step: float, n: int = 3, floor: float = 0.0) -> list[float]:
+        """Build a finer candidate range centered on *center*.
+
+        Spaces *n* values half of *step* apart, clamped to *floor* so gains
+        never go negative (or below some sane minimum).
+        """
+        half = step / 2.0
+        mid = (n - 1) / 2.0
+        return [max(center + (i - mid) * half, floor) for i in range(n)]
+
+    def _grid_sweep(
+        self,
+        test_fn: Callable[..., CalibrationResult],
+        kp_key: str,
+        kd_key: str,
+        kp_values: list[float],
+        kd_values: list[float],
+        stage_name: str,
+        on_candidate: Optional[Callable[[str], None]] = None,
+        **test_kwargs,
+    ) -> list[tuple[dict, CalibrationResult]]:
+        """Run *test_fn* once per (kp, kd) candidate in the grid, logging each."""
+        tried: list[tuple[dict, CalibrationResult]] = []
+        total = len(kp_values) * len(kd_values)
+        idx = 0
+        for kp in kp_values:
+            for kd in kd_values:
+                idx += 1
+                gains = {kp_key: kp, kd_key: kd}
+                result = test_fn(gains=gains, **test_kwargs)
+                tried.append((gains, result))
+                line = (
+                    f"{stage_name} {idx}/{total}: "
+                    f"{kp_key}={kp:.4g} {kd_key}={kd:.4g} -> score={result.score:.2f}"
+                )
+                if on_candidate is not None:
+                    on_candidate(line)
+        return tried
+
+    @staticmethod
+    def _recap_lines(
+        tried: list[tuple[dict, CalibrationResult]],
+        best_gains: dict,
+        stage_name: str,
+    ) -> list[str]:
+        """Format every candidate in a stage, marking the winner."""
+        lines = [f"--- {stage_name} stage results ---"]
+        for gains, result in tried:
+            marker = " <-- BEST" if gains is best_gains else ""
+            parts = ", ".join(f"{k}={v:.4g}" for k, v in gains.items())
+            lines.append(f"  {parts} -> score={result.score:.2f}{marker}")
+        return lines
+
+    def _auto_tune(
+        self,
+        kind: str,
+        test_fn: Callable[..., CalibrationResult],
+        kp_key: str,
+        kd_key: str,
+        coarse_kp: tuple[float, float, float],
+        coarse_kd: tuple[float, float, float],
+        kp_floor: float,
+        kd_floor: float,
+        on_candidate: Optional[Callable[[str], None]] = None,
+        **test_kwargs,
+    ) -> AutoTuneResult:
+        """Shared coarse-to-fine grid sweep used by both turn and linear tuning."""
+        log: list[str] = []
+
+        def emit(line: str) -> None:
+            log.append(line)
+            if on_candidate is not None:
+                on_candidate(line)
+
+        coarse_tried = self._grid_sweep(
+            test_fn, kp_key, kd_key, list(coarse_kp), list(coarse_kd),
+            "coarse", emit, **test_kwargs,
+        )
+        coarse_gains, coarse_result = self._best(coarse_tried)
+        for line in self._recap_lines(coarse_tried, coarse_gains, "coarse"):
+            emit(line)
+
+        kp_step = (coarse_kp[1] - coarse_kp[0]) if len(coarse_kp) > 1 else coarse_kp[0]
+        kd_step = (coarse_kd[1] - coarse_kd[0]) if len(coarse_kd) > 1 else coarse_kd[0]
+        fine_kp = self._narrow(coarse_gains[kp_key], kp_step, floor=kp_floor)
+        fine_kd = self._narrow(coarse_gains[kd_key], kd_step, floor=kd_floor)
+
+        fine_tried = self._grid_sweep(
+            test_fn, kp_key, kd_key, fine_kp, fine_kd,
+            "fine", emit, **test_kwargs,
+        )
+        fine_gains, fine_result = self._best(fine_tried)
+        for line in self._recap_lines(fine_tried, fine_gains, "fine"):
+            emit(line)
+
+        if fine_result.score < coarse_result.score:
+            best_gains, best_result = fine_gains, fine_result
+        else:
+            best_gains, best_result = coarse_gains, coarse_result
+            emit("fine stage did not improve, keeping coarse result")
+
+        # Re-apply the winner so the saved gains reflect the full current
+        # state (other gains the sweep didn't touch stay as they were).
+        full_gains = self.motion.apply_gains(best_gains)
+        self.save_result(best_result, full_gains)
+        emit(
+            f"Auto-tune {kind} done: {kp_key}={full_gains[kp_key]:.4g} "
+            f"{kd_key}={full_gains[kd_key]:.4g} score={best_result.score:.2f} (saved)"
+        )
+
+        return AutoTuneResult(
+            gains=full_gains,
+            best_result=best_result,
+            tried=coarse_tried + fine_tried,
+            log=log,
+        )
+
+    def auto_tune_turn(
+        self,
+        on_candidate: Optional[Callable[[str], None]] = None,
+        coarse_kp: tuple[float, float, float] = (0.5, 1.0, 1.5),
+        coarse_kd: tuple[float, float, float] = (0.0, 0.1, 0.2),
+        **test_kwargs,
+    ) -> AutoTuneResult:
+        """Coarse-to-fine grid sweep over (turn_kp, turn_kd) via the angular turn test."""
+        return self._auto_tune(
+            "turn",
+            self.run_angular_turn_test,
+            "turn_kp",
+            "turn_kd",
+            coarse_kp,
+            coarse_kd,
+            kp_floor=0.05,
+            kd_floor=0.0,
+            on_candidate=on_candidate,
+            **test_kwargs,
+        )
+
+    def auto_tune_linear(
+        self,
+        on_candidate: Optional[Callable[[str], None]] = None,
+        coarse_kp: tuple[float, float, float] = (0.001, 0.002, 0.004),
+        coarse_kd: tuple[float, float, float] = (0.0, 0.0005, 0.001),
+        **test_kwargs,
+    ) -> AutoTuneResult:
+        """Coarse-to-fine grid sweep over (linear_kp, linear_kd) via the linear forward test."""
+        return self._auto_tune(
+            "linear",
+            self.run_linear_forward_test,
+            "linear_kp",
+            "linear_kd",
+            coarse_kp,
+            coarse_kd,
+            kp_floor=0.0002,
+            kd_floor=0.0,
+            on_candidate=on_candidate,
+            **test_kwargs,
+        )

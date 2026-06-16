@@ -96,11 +96,63 @@ mv.is_facing_dir(current_theta, target_theta, threshold_rad=0.1)
 mv.rotational_motion(current_theta, target_theta, deadline)
 
 # Drive only. Returns (vx, vy) in robot frame, m/s.
-mv.translational_motion(current_pos, target_xy, deadline)
+# stay_in_field=True activates dynamic braking near the field boundary.
+mv.translational_motion(current_pos, target_xy, deadline, stay_in_field=True)
 
 # Option C: guarded combined movement. Returns (vx, vy, w).
 mv.general_motion(current_pos, target_xy, target_theta, deadline)
 ```
+
+---
+
+## Field-Boundary Enforcement (`stay_in_field`)
+
+Pass `stay_in_field=True` to `translational_motion` whenever the robot should
+stay on the field. (Renamed from `field_limit` — same parameter, clearer
+name.) This routes through `ball_nav.apply_boundary_braking` (the shared
+motion-rule layer used by every controller, not just the PD one), which
+applies four stages **after** the accel limiter, all tunable in
+`field_config.py`:
+
+### Stage 1 — Decel zone (inside field, within the zone)
+
+When the robot is inside the field but within `VORONOI_BOUNDARY_DECEL_ZONE_MM`
+(default 400 mm) of any boundary edge, speed is capped with a **linear
+ramp** — full speed at the zone's outer edge, down to
+`VORONOI_BOUNDARY_NEAR_SPEED_SCALE` (default 0.05, i.e. 5% of `MAX_SPEED`)
+right at the wall:
+
+```text
+t = dist_to_boundary / VORONOI_BOUNDARY_DECEL_ZONE_MM
+v_max = MAX_SPEED × (NEAR_SPEED_SCALE + t × (1 − NEAR_SPEED_SCALE))
+```
+
+The PD controller may compute a higher speed; this cap overrides it. This
+is a simple linear ramp, not a physics-derived stopping-distance curve —
+`regulate_speed_to_target`'s `sqrt(2 × LINEAR_AMAX × dist)` cap (see below)
+is the one place that formula is actually used, for never-overshooting a
+*target*, not the field boundary.
+
+### Stage 2 — Out-of-field crawl (outside field)
+
+If the robot is already outside the field, velocity is multiplied by
+`VORONOI_OUT_OF_FIELD_SPEED_SCALE` (default 0.1).  This is a safety backstop
+so momentum is killed quickly; the navigator also overrides the movement target
+to the nearest boundary point to actively return the robot.
+
+### Stage 3 — Hard stop
+
+Regardless of which stage above fired, any velocity component pointing
+further into a boundary the robot is already within
+`VORONOI_BOUNDARY_HARD_STOP_MM` (default 30 mm) of is zeroed outright — the
+final guarantee the robot never drives further out.
+
+### Stage 4 — Goal-post zone
+
+Past either end line, within `GOAL_HALF_WIDTH_MM + ROBOT_RADIUS` of the
+center line (i.e. lined up with the goal mouth), the x-component driving
+further into the physical goal structure is zeroed — it's a hard obstacle,
+not a soft boundary like the rest of the field edge.
 
 ---
 
@@ -291,3 +343,48 @@ Increase `BLEND_DIST` if the robot spins too much during combined movement.
 
 Until these are built, treat this document as the movement design target, not
 as a fully integrated architecture.
+
+---
+
+## Calibration Logs
+
+PD auto-tune (`PDCalibration.auto_tune_turn` / `auto_tune_linear` in
+`pd_calibration.py`) writes a full per-candidate history for every sweep to
+`calibration_logs/<team>/<letter>/<timestamp>_<kind>_autotune.json` (see
+`robot/motion/calibration_log.py`). `movement_calibration.json` only ever
+keeps the latest winning gains, so this is the place to look if you need to
+see what a sweep actually tried.
+
+**Not yet done:** the hardware Auto-Calibrate / Speed Sweep flow in
+`ui/calibration_page.py` still logs into the flat `"runs"` array inside
+`calibration.json` instead of this per-robot folder. Migrating it to the
+same `calibration_logs/<team>/<letter>/` convention is a follow-up.
+
+---
+
+## Wheel-Aware Speed/Accel Limits
+
+`MAX_SPEED`/`MAX_W`/`LINEAR_AMAX`/`ANGULAR_AMAX` cap speed/acceleration as
+an isotropic circle — the same in every direction. The real robot (and
+grSim's own physics model, see `SSL/grSim/config_files/TurtleRabbit.ini`)
+is a 4-omniwheel robot with **asymmetric** wheel angles
+(60°/135°/225°/300°), so the true achievable envelope is direction-
+dependent. `robot/motion/wheel_kinematics.py` adds an opt-in wheel-aware
+limiter: enter a robot's wheel angles, wheel/robot radius, and measured
+max wheel speed/accel in the PD Calibration page's "Wheel Geometry" card,
+and `RobotMotionController` automatically switches that robot from the
+isotropic limiter to the true wheel-feasible envelope. Leaving
+`max_wheel_speed_mps`/`max_wheel_accel_mps2` at 0 (→ `None`) keeps a robot
+on the old isotropic behaviour — this is purely additive, nothing changes
+until those two are measured and entered.
+
+**Keeping grSim in sync (manual step):** this repo doesn't launch or
+control grSim (`harness/grSim_runner.py` only talks to an already-running
+instance over UDP), so there's no live sync. When a robot's wheel geometry
+changes, manually copy the same numbers into `TurtleRabbit.ini`
+(`wheel*_angle_deg` → `WheelXAngle`, `wheel_radius_mm` → `WheelRadius` in
+metres, `robot_radius_mm` → `Radius` in metres) and restart grSim, so the
+simulated physics matches what the limiter assumes. The newer
+`ssl_simulation_config.proto` (`RobotSpecs`/`SimulatorConfig`) could
+automate this via a live config channel, but its sender is commented out
+in `network/ssl_sockets.py` and wiring it up is out of scope for now.

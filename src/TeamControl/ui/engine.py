@@ -18,6 +18,12 @@ from TeamControl.process_workers.wm_runner import WMWorker
 from TeamControl.process_workers.robot_recv_runner import RobotRecv
 from TeamControl.process_workers.voronoi_map_runner import WorldMapRenderWorker
 from TeamControl.world.model_manager import WorldModelManager
+from TeamControl.world.field_config import (
+    VORONOI_HORIZON_MS,
+    VORONOI_OBSTACLE_COST_WEIGHT,
+    VORONOI_RENDER_DENSITY_PERCENT,
+    VORONOI_RENDER_MAX_DENSITY_NODES,
+)
 from TeamControl.dispatcher.dispatch import Dispatcher
 from TeamControl.utils.yaml_config import Config
 from TeamControl.world.recording import AsyncSnapshotRecorder
@@ -26,6 +32,8 @@ from TeamControl.robot.goalie import run_goalie
 from TeamControl.robot.striker import run_striker
 from TeamControl.robot.navigator import run_navigator, WAYPOINTS_A, WAYPOINTS_B
 from TeamControl.robot.voronoi_navigator import run_voronoi_navigator
+from TeamControl.robot.voronoi_game_navigator import run_voronoi_game_navigator
+from TeamControl.robot.voronoi_pd_test_navigator import run_pd_planner_test
 from TeamControl.robot.team import run_team
 from TeamControl.robot.coop import run_coop
 
@@ -56,12 +64,15 @@ class SimEngine(QObject):
         "calibration",
         "vision_only",
         "voronoi_test",
+        "pd_test",
+        "match",
         "goalie",
         "1v1",
         "obstacle",
         "coop",
         "6v6",
     ]
+    COMPETITION_MODES = {"6v6"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -152,6 +163,19 @@ class SimEngine(QObject):
             return True
         except Exception:
             return False
+
+    def dashboard_action_block_reason(self) -> str | None:
+        """Return why field-click dashboard actions are disabled, if blocked."""
+        if not self._running:
+            return "engine is not running"
+        if self._mode in self.COMPETITION_MODES:
+            return f"competition mode is active ({self._mode})"
+        if not self._channel_options.get("send_grsim", False):
+            return "Send Commands to grSim is off"
+        return None
+
+    def dashboard_actions_allowed(self) -> bool:
+        return self.dashboard_action_block_reason() is None
 
     def set_map_render_enabled(self, enabled: bool):
         """Enable the optional debug-map stream while its tab is visible."""
@@ -379,6 +403,46 @@ class SimEngine(QObject):
                 "robot through the live Voronoi planner")
             return procs
 
+        if mode == "pd_test":
+            # Single robot only -- live integration test for
+            # RobotMotionController's rule set (motion/controller.py),
+            # which otherwise only the PD calibration harness exercises.
+            procs.append(Process(target=run_pd_planner_test,
+                                 args=(ev, dq, wm, our_id, preset.us_yellow,
+                                       self._planner_path_q),
+                                 daemon=True))
+            self.log_message.emit(
+                "[engine] PD test mode — running one robot through the live "
+                "Voronoi planner, driven by RobotMotionController (PD)")
+            return procs
+
+        if mode == "match":
+            us_y = preset.us_yellow
+            opp_y = not us_y
+            our_is_goalie = bool(
+                our_id == preset.goalie_yellow_id if us_y
+                else our_id == preset.goalie_blue_id
+            )
+            opp_is_goalie = bool(
+                opp_id == preset.goalie_yellow_id if opp_y
+                else opp_id == preset.goalie_blue_id
+            )
+            procs.append(Process(target=run_voronoi_game_navigator,
+                                 args=(ev, dq, wm, our_id, us_y,
+                                       self._planner_path_q),
+                                 kwargs=dict(is_goalie=our_is_goalie),
+                                 daemon=True))
+            procs.append(Process(target=run_voronoi_game_navigator,
+                                 args=(ev, dq, wm, opp_id, opp_y,
+                                       self._planner_path_q),
+                                 kwargs=dict(is_goalie=opp_is_goalie),
+                                 daemon=True))
+            self.log_message.emit(
+                "[engine] Match mode — running one yellow and one blue robot "
+                "through the full game navigator (penalty-box guard, steal, "
+                "precision approach, smoothing)")
+            return procs
+
         if mode == "goalie":
             procs.append(Process(target=run_goalie,
                                  args=(ev, dq, wm, our_id, preset.us_yellow),
@@ -497,7 +561,7 @@ class SimEngine(QObject):
         try:
             planning_obstacles = self._wm.get_planning_obstacles(
                 now_s=now_s,
-                horizon_ms=250,
+                horizon_ms=VORONOI_HORIZON_MS,
             )
         except Exception as exc:
             self.log_message.emit(f"[map] render worker obstacle error: {exc}")
@@ -522,9 +586,9 @@ class SimEngine(QObject):
                 "ball_vel_mmps": ball_vel_mmps,
                 "planner_paths": tuple(self._latest_planner_paths.values()),
                 "include_voronoi": True,
-                "density_percent": 10.0,
-                "max_density_nodes": 80,
-                "obstacle_cost_weight": 2.0,
+                "density_percent": VORONOI_RENDER_DENSITY_PERCENT,
+                "max_density_nodes": VORONOI_RENDER_MAX_DENSITY_NODES,
+                "obstacle_cost_weight": VORONOI_OBSTACLE_COST_WEIGHT,
             }
             if field_length_mm is not None and field_width_mm is not None:
                 request["field_length_mm"] = field_length_mm
@@ -672,20 +736,36 @@ class SimEngine(QObject):
     # ── Simulation controls ───────────────────────────────────────
 
     def place_ball(self, x_mm, y_mm, vx=0.0, vy=0.0):
+        blocked = self.dashboard_action_block_reason()
+        if blocked:
+            self.log_message.emit(f"[dashboard] Ball placement blocked: {blocked}")
+            return False
         if not self._grsim_sender:
-            return
+            self.log_message.emit(
+                "[dashboard] Ball placement blocked: grSim sender unavailable"
+            )
+            return False
         try:
             pkt = grSimPacketFactory.ball_replacement_command(
                 x=x_mm / 1000.0, y=y_mm / 1000.0,
                 vx=vx / 1000.0, vy=vy / 1000.0)
             self._grsim_sender.send_packet(pkt)
             self.log_message.emit(f"[sim] Ball placed at ({x_mm:.0f}, {y_mm:.0f})")
+            return True
         except Exception as e:
             self.log_message.emit(f"[sim] Ball placement failed: {e}")
+            return False
 
     def place_robot(self, robot_id, is_yellow, x_mm, y_mm, orientation=0.0):
+        blocked = self.dashboard_action_block_reason()
+        if blocked:
+            self.log_message.emit(f"[dashboard] Robot placement blocked: {blocked}")
+            return False
         if not self._grsim_sender:
-            return
+            self.log_message.emit(
+                "[dashboard] Robot placement blocked: grSim sender unavailable"
+            )
+            return False
         try:
             pkt = grSimPacketFactory.robot_replacement_command(
                 x=x_mm / 1000.0, y=y_mm / 1000.0,
@@ -695,8 +775,10 @@ class SimEngine(QObject):
             team = "Yellow" if is_yellow else "Blue"
             self.log_message.emit(
                 f"[sim] {team} #{robot_id} placed at ({x_mm:.0f}, {y_mm:.0f})")
+            return True
         except Exception as e:
             self.log_message.emit(f"[sim] Robot placement failed: {e}")
+            return False
 
 
 def _positive_float(value):

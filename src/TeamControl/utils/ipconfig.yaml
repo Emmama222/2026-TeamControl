@@ -72,6 +72,9 @@ blue:
     grSimID: 5
     shellID: 5
     has_chip_kick: false
+goalie:
+  yellow: A
+  blue: A
 grSim:
   ip: 127.0.0.1
   port: 20011

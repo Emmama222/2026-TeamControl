@@ -6,7 +6,13 @@ import time
 from multiprocessing import Queue
 
 from TeamControl.process_workers.worker import BaseWorker
-from TeamControl.world.field_config import FIELD_LENGTH_MM, FIELD_WIDTH_MM
+from TeamControl.world.field_config import (
+    FIELD_LENGTH_MM,
+    FIELD_WIDTH_MM,
+    VORONOI_OBSTACLE_COST_WEIGHT,
+    VORONOI_RENDER_DENSITY_PERCENT,
+    VORONOI_RENDER_MAX_DENSITY_NODES,
+)
 from TeamControl.world.map.renderer import (
     BALL,
     BLUE,
@@ -177,9 +183,15 @@ def _build_render_data(request: dict) -> tuple[MapRenderData, float | None]:
         field_kwargs = _field_dimension_kwargs(request)
         voronoi_map = generate_bounded_voronoi_map(
             placement_mode="density_grid",
-            density_percent=float(request.get("density_percent", 10.0)),
-            max_density_nodes=int(request.get("max_density_nodes", 80)),
-            obstacle_cost_weight=float(request.get("obstacle_cost_weight", 2.0)),
+            density_percent=float(
+                request.get("density_percent", VORONOI_RENDER_DENSITY_PERCENT)
+            ),
+            max_density_nodes=int(
+                request.get("max_density_nodes", VORONOI_RENDER_MAX_DENSITY_NODES)
+            ),
+            obstacle_cost_weight=float(
+                request.get("obstacle_cost_weight", VORONOI_OBSTACLE_COST_WEIGHT)
+            ),
             obstacles=planning_obstacles,
             **field_kwargs,
         )

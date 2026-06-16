@@ -1,6 +1,7 @@
 import time
 
 from TeamControl.planner import PlannerInput, VoronoiWaypointManager
+from TeamControl.world.field_config import FIELD_X_MAX, VORONOI_FIELD_TARGET_MARGIN_MM
 from TeamControl.world.map.obstacles import Obstacle
 from TeamControl.world.map.world_map import WorldMap
 
@@ -175,6 +176,46 @@ def test_waypoint_manager_accepts_explicit_tuple_obstacles():
     assert output.waypoints
 
 
+def test_waypoint_manager_offsets_target_out_of_clearance_zone():
+    manager = VoronoiWaypointManager(density_percent=60, max_density_nodes=120)
+
+    output = manager.update(
+        PlannerInput(
+            robot_id=0,
+            is_yellow=True,
+            current_pose=(-1000.0, 0.0),
+            target_pose=(-10.0, 0.0, 0.4),
+            obstacles=((0.0, 0.0, 180.0),),
+        )
+    )
+
+    assert output.is_path_free is True
+    assert output.endpoint_was_adjusted is True
+    assert output.endpoint_precision_mode is True
+    assert output.waypoints == ()
+    assert output.active_target_pose == (-255.0, 0.0, 0.4)
+
+
+def test_waypoint_manager_uses_precision_mode_when_offset_stays_in_clearance():
+    manager = VoronoiWaypointManager(density_percent=10, max_density_nodes=20)
+
+    output = manager.update(
+        PlannerInput(
+            robot_id=0,
+            is_yellow=True,
+            current_pose=(1000.0, 0.0),
+            target_pose=(0.0, 0.0, 0.4),
+            obstacles=((0.0, 0.0, 10000.0),),
+        )
+    )
+
+    assert output.is_path_free is False
+    assert output.endpoint_was_adjusted is True
+    assert output.endpoint_precision_mode is True
+    # endpoint is clamped to the field-target margin inset, not the raw boundary
+    assert output.active_target_pose == (FIELD_X_MAX - VORONOI_FIELD_TARGET_MARGIN_MM, 0.0, 0.4)
+
+
 def test_waypoint_manager_can_ignore_obstacle_that_contains_target_for_steal():
     manager = VoronoiWaypointManager(density_percent=60, max_density_nodes=120)
 
@@ -199,8 +240,13 @@ def test_waypoint_manager_can_ignore_obstacle_that_contains_target_for_steal():
         )
     )
 
-    assert blocked.is_path_free is False
+    assert blocked.is_path_free is True
+    assert blocked.endpoint_was_adjusted is True
+    assert blocked.endpoint_precision_mode is True
+    assert blocked.waypoints == ()
+    assert blocked.active_target_pose == (-255.0, 0.0, 0.0)
     assert steal.is_path_free is True
+    assert steal.endpoint_was_adjusted is False
     assert steal.active_target_pose == (0.0, 0.0, 0.0)
 
 
@@ -240,4 +286,10 @@ def test_waypoint_manager_steal_ignore_can_be_limited_to_specific_obstacle_key()
     )
 
     assert not_allowed.is_path_free is False
+    assert not_allowed.endpoint_was_adjusted is True
+    assert not_allowed.endpoint_precision_mode is True
+    assert not_allowed.waypoints == ()
+    assert not_allowed.active_target_pose == (-145.0, 0.0, 0.0)
     assert allowed.is_path_free is True
+    assert allowed.endpoint_was_adjusted is False
+    assert allowed.active_target_pose == (0.0, 0.0, 0.0)

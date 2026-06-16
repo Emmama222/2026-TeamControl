@@ -11,7 +11,8 @@ Features:
 """
 
 import math
-from PySide6.QtWidgets import QWidget, QToolTip, QMenu
+import time
+from PySide6.QtWidgets import QWidget, QToolTip, QMenu, QSizePolicy
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal, QSize
 from PySide6.QtGui import (QPainter, QPen, QBrush, QColor, QFont,
                            QPainterPath, QTransform, QWheelEvent,
@@ -22,16 +23,25 @@ from TeamControl.ui.theme import (FIELD_GREEN, FIELD_LINE, YELLOW_TEAM,
                                    ROLE_GOALIE, ROLE_ATTACKER, ROLE_SUPPORT,
                                    ROLE_DEFENDER, TEXT)
 from TeamControl.robot.constants import (
-    FIELD_LENGTH as DEFAULT_FIELD_LENGTH,
-    FIELD_WIDTH as DEFAULT_FIELD_WIDTH,
-    PENALTY_DEPTH as DEFAULT_PENALTY_DEPTH,
-    PENALTY_WIDTH as DEFAULT_PENALTY_WIDTH,
     CENTER_RADIUS as DEFAULT_CENTER_RADIUS,
-    GOAL_DEPTH as DEFAULT_GOAL_DEPTH,
-    GOAL_WIDTH as DEFAULT_GOAL_WIDTH,
     ROBOT_RADIUS,
     FIELD_MARGIN as DEFAULT_MARGIN,
 )
+from TeamControl.world.field_config import (
+    FIELD_LENGTH_MM as DEFAULT_FIELD_LENGTH,
+    FIELD_WIDTH_MM as DEFAULT_FIELD_WIDTH,
+    DEFENCE_X_MM as DEFAULT_PENALTY_DEPTH,
+    DEFENCE_Y_MM as _DEFAULT_PENALTY_HALF_WIDTH,
+    GOAL_DEPTH_MM as DEFAULT_GOAL_DEPTH,
+    GOAL_WIDTH_MM as DEFAULT_GOAL_WIDTH,
+    DASHBOARD_BALL_PLACE_CONFIRM_SECONDS,
+    DASHBOARD_BALL_PLACE_CONFIRM_TOLERANCE_MM,
+)
+
+# field_config's DEFENCE_Y_MM is a half-width; this default wants the
+# total penalty-box width (matches the SSL-Vision geometry field this
+# defaults for).
+DEFAULT_PENALTY_WIDTH = 2.0 * _DEFAULT_PENALTY_HALF_WIDTH
 
 
 class FieldCanvas(QWidget):
@@ -46,7 +56,8 @@ class FieldCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(600, 400)
+        self.setMinimumSize(320, 240)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
 
         # Data
@@ -54,6 +65,8 @@ class FieldCanvas(QWidget):
         self._blue: list = []
         self._ball = None
         self._targets: list[tuple] = []
+        self._ball_place_marker: tuple[float, float] | None = None
+        self._ball_place_marker_seen_since_s: float | None = None
         self._paths: list[list[tuple]] = []
         self._frame_number = 0
         self._field_geometry = None
@@ -75,11 +88,20 @@ class FieldCanvas(QWidget):
         self._blue = [r for r in snap.blue if r is not None]
         self._ball = snap.ball
         self._frame_number = snap.frame_number
+        self._update_ball_place_marker_confirmation()
         self.update()
 
 
     def set_targets(self, targets):
         self._targets = list(targets)
+        self.update()
+
+    def set_ball_place_marker(self, x_mm: float | None, y_mm: float | None = None):
+        if x_mm is None or y_mm is None:
+            self._ball_place_marker = None
+        else:
+            self._ball_place_marker = (float(x_mm), float(y_mm))
+        self._ball_place_marker_seen_since_s = None
         self.update()
 
     def set_paths(self, paths):
@@ -258,14 +280,22 @@ class FieldCanvas(QWidget):
                        QPointF(ax + math.cos(a2) * head,
                                ay + math.sin(a2) * head))
 
-            # ID label
-            p.setPen(QPen(QColor("#000000"), 1))
-            font = QFont("Segoe UI", 1)
-            font.setPixelSize(80)
-            font.setBold(True)
-            p.setFont(font)
-            text_rect = QRectF(cx - 50, cy - 50, 100, 100)
-            p.drawText(text_rect, Qt.AlignCenter, str(r.id))
+            self._draw_robot_id_label(p, QPointF(cx, cy), str(r.id))
+
+    def _draw_robot_id_label(self, p: QPainter, center: QPointF, text: str):
+        """Draw robot IDs in screen pixels so labels stay readable at any zoom."""
+        screen_center = p.transform().map(center)
+        p.save()
+        p.resetTransform()
+        font = QFont("Segoe UI", 12, QFont.Bold)
+        p.setFont(font)
+        rect = QRectF(screen_center.x() - 14, screen_center.y() - 12, 28, 24)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 145))
+        p.drawRoundedRect(rect.adjusted(1, 2, -1, -2), 4, 4)
+        p.setPen(QPen(QColor("#ffffff"), 1))
+        p.drawText(rect, Qt.AlignCenter, text)
+        p.restore()
 
     def _draw_robot_body(self, p: QPainter, cx, cy, theta, color: QColor):
         """Draw the SSL robot footprint: circular rear with a flat kicker front."""
@@ -295,26 +325,53 @@ class FieldCanvas(QWidget):
         p.setBrush(QBrush(QColor(BALL_COLOR)))
         p.drawEllipse(QPointF(bx, by), 45, 45)
 
+    def _update_ball_place_marker_confirmation(self):
+        if self._ball_place_marker is None:
+            self._ball_place_marker_seen_since_s = None
+            return
+        if not self._ball:
+            self._ball_place_marker_seen_since_s = None
+            return
+
+        tx, ty = self._ball_place_marker
+        dist = math.hypot(float(self._ball.x) - tx, float(self._ball.y) - ty)
+        if dist > DASHBOARD_BALL_PLACE_CONFIRM_TOLERANCE_MM:
+            self._ball_place_marker_seen_since_s = None
+            return
+
+        now_s = time.monotonic()
+        if self._ball_place_marker_seen_since_s is None:
+            self._ball_place_marker_seen_since_s = now_s
+            return
+        if now_s - self._ball_place_marker_seen_since_s >= (
+            DASHBOARD_BALL_PLACE_CONFIRM_SECONDS
+        ):
+            self._ball_place_marker = None
+            self._ball_place_marker_seen_since_s = None
+
     def _draw_overlays(self, p: QPainter):
         """Draw optional subclasses' field-space overlays."""
         return
 
     def _draw_targets(self, p: QPainter):
-        if not self._targets:
-            return
+        if self._ball_place_marker is not None:
+            tx, ty = self._ball_place_marker
+            self._draw_target_x(p, tx, ty, BALL_COLOR, size=85, width=18)
         for item in self._targets:
             if len(item) == 3:
                 tx, ty, color_hex = item
             else:
                 tx, ty = item
                 color_hex = ACCENT
-            p.setPen(QPen(QColor(color_hex), 16))
-            p.setBrush(Qt.NoBrush)
-            size = 60
-            p.drawLine(QPointF(tx - size, ty - size),
-                       QPointF(tx + size, ty + size))
-            p.drawLine(QPointF(tx - size, ty + size),
-                       QPointF(tx + size, ty - size))
+            self._draw_target_x(p, tx, ty, color_hex)
+
+    def _draw_target_x(self, p: QPainter, tx, ty, color_hex, size=60, width=16):
+        p.setPen(QPen(QColor(color_hex), width))
+        p.setBrush(Qt.NoBrush)
+        p.drawLine(QPointF(tx - size, ty - size),
+                   QPointF(tx + size, ty + size))
+        p.drawLine(QPointF(tx - size, ty + size),
+                   QPointF(tx + size, ty - size))
 
     def _draw_paths(self, p: QPainter):
         for path_entry in self._paths:

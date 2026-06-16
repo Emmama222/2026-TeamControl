@@ -37,6 +37,16 @@ class Config:
             "record_world_snapshot_dir", "match_replays"
         )
 
+        goalie_cfg = raw.get("goalie", {})
+        self.goalie_yellow_id = self._letter_to_grsim_id(self.yellow, goalie_cfg.get("yellow"))
+        self.goalie_blue_id = self._letter_to_grsim_id(self.blue, goalie_cfg.get("blue"))
+
+    @staticmethod
+    def _letter_to_grsim_id(team_cfg: dict, letter: str | None) -> int | None:
+        if letter is None or letter not in team_cfg:
+            return None
+        return team_cfg[letter]["grSimID"]
+
 
 if __name__ == "__main__":
     server_config = Config()

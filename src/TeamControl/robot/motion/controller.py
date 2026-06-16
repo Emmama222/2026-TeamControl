@@ -3,6 +3,13 @@ import time
 from typing import Optional, Tuple
 
 from TeamControl.robot import constants as C
+from TeamControl.robot.ball_nav import (
+    FieldGeometryCache,
+    apply_boundary_braking,
+    clamp_for_role,
+    predict_position,
+    regulate_speed_to_target,
+)
 from TeamControl.robot.motion.accel import AccelLimiter
 from TeamControl.robot.motion.hardware import (
     apply_hardware_gains,
@@ -12,6 +19,11 @@ from TeamControl.robot.motion.hardware import (
 )
 from TeamControl.robot.motion.pd import PDController
 from TeamControl.robot.motion.settings import PDSettingsStore
+from TeamControl.robot.motion.wheel_kinematics import (
+    WheelAccelLimiter,
+    max_angular_from_wheel_budget,
+    scale_to_wheel_speed_limit,
+)
 from TeamControl.world.transform_cords import world2robot
 
 _MOTION_CONTROLLERS = {}
@@ -76,12 +88,30 @@ class RobotMotionController:
         self.is_yellow = bool(is_yellow)
         self.settings = PDSettingsStore()
 
+        # Rule: motion controller is aware of field-size changes.
+        self._field_cache = FieldGeometryCache()
+        # Rule: this robot's role for stay_in_field's penalty-box clamp.
+        self.is_goalie = False
+        # Rule: anticipated dt is the measured time between calls (target
+        # ~0.05s), used for the predictive lookahead in translational_motion.
+        self._last_call_t: Optional[float] = None
+
         gains = self.settings.load_gains(self.robot_id, self.is_yellow)
         self.speed_scale = float(gains["speed_scale"])
         self.lateral_drift_per_m = float(gains["lateral_drift_per_m"])
         self.stop_overshoot_mm = float(gains["stop_overshoot_mm"])
         self.min_v = float(gains["min_v"])
         self.min_w = float(gains["min_w"])
+
+        self.wheel1_angle_deg = float(gains["wheel1_angle_deg"])
+        self.wheel2_angle_deg = float(gains["wheel2_angle_deg"])
+        self.wheel3_angle_deg = float(gains["wheel3_angle_deg"])
+        self.wheel4_angle_deg = float(gains["wheel4_angle_deg"])
+        self.wheel_radius_mm = float(gains["wheel_radius_mm"])
+        self.robot_radius_mm = float(gains["robot_radius_mm"])
+        # None means "not calibrated yet" -- isotropic limiter stays active.
+        self.max_wheel_speed_mps = gains["max_wheel_speed_mps"]
+        self.max_wheel_accel_mps2 = gains["max_wheel_accel_mps2"]
 
         self.angular_pd = PDController(
             kp=gains["turn_kp"],
@@ -94,8 +124,67 @@ class RobotMotionController:
             out_limit=C.MAX_SPEED,
         )
 
+        # Isotropic fallback -- always built, used whenever the wheel spec
+        # below isn't active (see _rebuild_wheel_limiters).
         self.linear_accel = AccelLimiter(C.LINEAR_AMAX)
         self.angular_accel = AccelLimiter(C.ANGULAR_AMAX)
+        self._rebuild_wheel_limiters()
+
+    def set_role(self, is_goalie: bool) -> None:
+        """Set whether this robot is the goalie (used by stay_in_field's
+        penalty-box clamp: goalie stays in, non-goalie stays out)."""
+        self.is_goalie = bool(is_goalie)
+
+    def _wheel_angles_deg(self) -> Tuple[float, float, float, float]:
+        return (
+            self.wheel1_angle_deg,
+            self.wheel2_angle_deg,
+            self.wheel3_angle_deg,
+            self.wheel4_angle_deg,
+        )
+
+    def _wheel_spec_active(self) -> bool:
+        """True once a robot's real wheel motor specs have been measured.
+
+        Geometry (angles/radii) alone isn't enough -- without a measured
+        max wheel speed/accel there's nothing to limit against, so the
+        isotropic AccelLimiter/MAX_SPEED path stays in charge until both
+        are set.
+        """
+        return self.max_wheel_speed_mps is not None and self.max_wheel_accel_mps2 is not None
+
+    def _rebuild_wheel_limiters(self) -> None:
+        """(Re)build the wheel-aware accel limiters from current gains.
+
+        Three independent instances, mirroring how linear_accel/
+        angular_accel are already independent -- translational_motion,
+        rotational_motion, and tuned_velocity are never the same logical
+        "channel" within one tick, so each gets its own limiter state
+        rather than sharing one (which would make one channel's call
+        starve the other's acceleration budget for that tick).
+        """
+        if self._wheel_spec_active():
+            angles = self._wheel_angles_deg()
+            radius_m = self.robot_radius_mm / 1000.0
+            accel = self.max_wheel_accel_mps2
+            self.wheel_linear_accel = WheelAccelLimiter(angles, radius_m, accel)
+            self.wheel_angular_accel = WheelAccelLimiter(angles, radius_m, accel)
+            self.wheel_tuned_accel = WheelAccelLimiter(angles, radius_m, accel)
+        else:
+            self.wheel_linear_accel = None
+            self.wheel_angular_accel = None
+            self.wheel_tuned_accel = None
+
+    def _cap_wheel_speed(self, vx: float, vy: float, w: float) -> Tuple[float, float, float]:
+        """Steady-state cap to the wheel-feasible envelope (no-op if not active)."""
+        if not self._wheel_spec_active():
+            return vx, vy, w
+        return scale_to_wheel_speed_limit(
+            vx, vy, w,
+            self._wheel_angles_deg(),
+            self.robot_radius_mm / 1000.0,
+            self.max_wheel_speed_mps,
+        )
 
     def reset(self) -> None:
         """Forget previous errors."""
@@ -103,6 +192,13 @@ class RobotMotionController:
         self.linear_pd.reset()
         self.linear_accel.reset()
         self.angular_accel.reset()
+        if self.wheel_linear_accel is not None:
+            self.wheel_linear_accel.reset()
+        if self.wheel_angular_accel is not None:
+            self.wheel_angular_accel.reset()
+        if self.wheel_tuned_accel is not None:
+            self.wheel_tuned_accel.reset()
+        self._last_call_t = None
 
     def get_gains(self) -> dict:
         """Show the gains being used right now."""
@@ -116,6 +212,14 @@ class RobotMotionController:
             "stop_overshoot_mm": self.stop_overshoot_mm,
             "min_v": self.min_v,
             "min_w": self.min_w,
+            "wheel1_angle_deg": self.wheel1_angle_deg,
+            "wheel2_angle_deg": self.wheel2_angle_deg,
+            "wheel3_angle_deg": self.wheel3_angle_deg,
+            "wheel4_angle_deg": self.wheel4_angle_deg,
+            "wheel_radius_mm": self.wheel_radius_mm,
+            "robot_radius_mm": self.robot_radius_mm,
+            "max_wheel_speed_mps": self.max_wheel_speed_mps,
+            "max_wheel_accel_mps2": self.max_wheel_accel_mps2,
         }
 
     def apply_gains(self, gains: dict) -> dict:
@@ -138,7 +242,26 @@ class RobotMotionController:
             self.min_v = float(gains["min_v"])
         if "min_w" in gains:
             self.min_w = float(gains["min_w"])
+        if "wheel1_angle_deg" in gains:
+            self.wheel1_angle_deg = float(gains["wheel1_angle_deg"])
+        if "wheel2_angle_deg" in gains:
+            self.wheel2_angle_deg = float(gains["wheel2_angle_deg"])
+        if "wheel3_angle_deg" in gains:
+            self.wheel3_angle_deg = float(gains["wheel3_angle_deg"])
+        if "wheel4_angle_deg" in gains:
+            self.wheel4_angle_deg = float(gains["wheel4_angle_deg"])
+        if "wheel_radius_mm" in gains:
+            self.wheel_radius_mm = float(gains["wheel_radius_mm"])
+        if "robot_radius_mm" in gains:
+            self.robot_radius_mm = float(gains["robot_radius_mm"])
+        if "max_wheel_speed_mps" in gains:
+            value = gains["max_wheel_speed_mps"]
+            self.max_wheel_speed_mps = None if value is None else float(value)
+        if "max_wheel_accel_mps2" in gains:
+            value = gains["max_wheel_accel_mps2"]
+            self.max_wheel_accel_mps2 = None if value is None else float(value)
 
+        self._rebuild_wheel_limiters()
         self.reset()
         return self.get_gains()
 
@@ -228,7 +351,22 @@ class RobotMotionController:
         if use_hardware:
             w = apply_min_angular_command(w, self.min_w)
 
-        w = self.angular_accel.limit(w)
+        if self.wheel_angular_accel is not None:
+            _, _, w = self.wheel_angular_accel.limit((0.0, 0.0, w))
+            _, _, w = self._cap_wheel_speed(0.0, 0.0, w)
+        else:
+            w = self.angular_accel.limit(w)
+
+        # Rule: rotation may only claim PD_ANGULAR_WHEEL_BUDGET_SHARE of the
+        # wheel budget once it's calibrated -- keeps translation prioritized
+        # over spinning.
+        if self._wheel_spec_active():
+            budget_w = max_angular_from_wheel_budget(
+                self.robot_radius_mm / 1000.0,
+                self.max_wheel_speed_mps,
+                C.PD_ANGULAR_WHEEL_BUDGET_SHARE,
+            )
+            w = max(-budget_w, min(budget_w, w))
         return w
 
     def translational_motion(
@@ -238,8 +376,22 @@ class RobotMotionController:
         deadline: float,
         use_pd: bool = True,
         use_hardware: bool = True,
+        stay_in_field: bool = False,
     ) -> Tuple[float, float]:
-        """Drive only. Returns vx, vy in robot frame."""
+        """Drive only. Returns vx, vy in robot frame.
+
+        stay_in_field=True (renamed from field_limit): remain in field,
+        get back into the field if already out -- applies dynamic boundary
+        braking, goalie/non-goalie penalty-box clamping, and the goal-post
+        no-go zone (shared with ball_nav, see ball_nav.apply_boundary_braking
+        / clamp_for_role). False: the robot may exit the field.
+        """
+        # Rule: aware of any change in field geometry.
+        self._field_cache.refresh()
+
+        if stay_in_field:
+            target_pos = clamp_for_role(target_pos, self.is_goalie)
+
         target_in_robot_frame = world2robot(current_pos, target_pos)
 
         if use_hardware:
@@ -266,7 +418,32 @@ class RobotMotionController:
             vx, vy = apply_hardware_gains(vx, vy, self.get_gains())
             vx, vy = apply_min_linear_command(vx, vy, self.min_v)
 
-        vx, vy = self.linear_accel.limit((vx, vy))
+        if self.wheel_linear_accel is not None:
+            vx, vy, _ = self.wheel_linear_accel.limit((vx, vy, 0.0))
+            vx, vy, _ = self._cap_wheel_speed(vx, vy, 0.0)
+        else:
+            vx, vy = self.linear_accel.limit((vx, vy))
+
+        # Rule: never overshoot -- anticipate where the robot will be next
+        # loop (measured dt, target ~0.05s) and cap speed so it can still
+        # stop in time at the target. Stateless: recomputed fresh from
+        # current state every call, no derivative-of-error term.
+        now = time.monotonic()
+        dt = (now - self._last_call_t) if self._last_call_t is not None else C.LOOP_RATE
+        self._last_call_t = now
+        predicted_xy = predict_position(current_pos, vx, vy, dt)
+        predicted_dist_mm = math.hypot(
+            target_pos[0] - predicted_xy[0], target_pos[1] - predicted_xy[1]
+        )
+        speed_mps = math.hypot(vx, vy)
+        regulated_speed = regulate_speed_to_target(predicted_dist_mm, speed_mps, C.LINEAR_AMAX)
+        if speed_mps > 0.0 and regulated_speed < speed_mps:
+            scale = regulated_speed / speed_mps
+            vx *= scale
+            vy *= scale
+
+        if stay_in_field:
+            vx, vy = apply_boundary_braking(current_pos, vx, vy)
         return vx, vy
 
     def general_motion(
@@ -316,7 +493,36 @@ class RobotMotionController:
         linear_scale = 1.0 - max(0.0, min(0.8, angle_err / math.pi))
         angular_scale = 1.0 - max(0.0, min(0.6, dist / C.BLEND_DIST))
 
-        return vx * linear_scale, vy * linear_scale, w * angular_scale
+        final_vx = vx * linear_scale
+        final_vy = vy * linear_scale
+        final_w = w * angular_scale
+        # vx/vy and w were each accel-limited independently above (separate
+        # channels, see _rebuild_wheel_limiters); combining them here can
+        # still jointly exceed a wheel's steady-state speed even though
+        # each was individually fine, so cap the combined triple too.
+        return self._cap_wheel_speed(final_vx, final_vy, final_w)
+
+    def face_while_moving(
+        self,
+        current_pos: Tuple[float, float, float],
+        target_pos: Tuple[float, float],
+        face_xy: Tuple[float, float],
+        deadline: float,
+        use_pd: bool = True,
+        use_hardware: bool = True,
+    ) -> Tuple[float, float, float]:
+        """Rule: support facing point A while moving to point B.
+
+        general_motion() already takes position and heading targets
+        independently -- this just names the common "face A while moving
+        to B" pattern, computing the heading target from face_xy.
+        """
+        target_theta = math.atan2(
+            face_xy[1] - current_pos[1], face_xy[0] - current_pos[0]
+        )
+        return self.general_motion(
+            current_pos, target_pos, target_theta, deadline, use_pd, use_hardware
+        )
 
     def tuned_velocity(
         self,
@@ -356,6 +562,10 @@ class RobotMotionController:
                 vy *= scale
             w = max(-C.MAX_W, min(C.MAX_W, w))
 
-        vx, vy = self.linear_accel.limit((vx, vy))
-        w = self.angular_accel.limit(w)
+        if self.wheel_tuned_accel is not None:
+            vx, vy, w = self.wheel_tuned_accel.limit((vx, vy, w))
+            vx, vy, w = self._cap_wheel_speed(vx, vy, w)
+        else:
+            vx, vy = self.linear_accel.limit((vx, vy))
+            w = self.angular_accel.limit(w)
         return vx, vy, w

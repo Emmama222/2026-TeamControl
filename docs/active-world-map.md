@@ -17,6 +17,45 @@ SSL Vision detection frame
 The map stores observations in world coordinates. Convert to a robot-relative
 frame only when a controller needs to issue movement commands.
 
+## Activation And API
+
+The world map is activated by starting the TeamControl backend. Both entry
+points create a manager-backed `WorldModel` and start `WMWorker`, which feeds
+vision/game-controller updates into `WorldModel.world_map`:
+
+```shell
+python ui_main.py
+python main.py --mode voronoi_test
+```
+
+In code, the live shared model is created through `WorldModelManager`:
+
+```python
+from TeamControl.world.model_manager import WorldModelManager
+
+wm_manager = WorldModelManager()
+wm_manager.start()
+wm = wm_manager.WorldModel()
+```
+
+Robot behaviours do not need to construct `WorldMap` directly. They receive the
+shared `wm` proxy from the process launcher and use its public methods:
+
+```python
+frame = wm.get_latest_frame()
+snapshot = wm.snapshot()
+planning_obstacles = wm.get_planning_obstacles(
+    now_s=now_s,
+    horizon_ms=250,
+    ignore_robots=((is_yellow, robot_id),),
+)
+```
+
+For planner integration, pass those frozen obstacle snapshots into
+`PlannerInput.obstacles`. See [Voronoi Planner Rules](voronoi-planner-rules.md)
+for the planner-side API and [Multiprocessing](Multiprocessing.md) for the
+process boundary.
+
 ## Vision Timestamps
 
 SSL Vision detection frames provide:
@@ -97,8 +136,9 @@ The effective radius expands with speed:
 radius_mm = safe_radius_mm + speed_mmps * prediction_horizon_s
 ```
 
-The Voronoi planner should build from this frozen view, follow only a short path
-segment, revalidate that segment against the newest map, and replan frequently.
+The planner should usually consume this frozen obstacle view through
+`PlannerInput.obstacles`. That keeps one control tick deterministic even though
+the underlying `WorldModel` is shared through a multiprocessing manager.
 
 ## Ball Tracking
 
@@ -146,9 +186,10 @@ prediction should not automatically beat a much stronger observation.
 
 ## Qt Debug Renderer
 
-The Qt command center has a `World Map` tab for inspecting tracked state. Its
-checkboxes are generated from serializable `RenderLayer` objects, so layers can
-be hidden independently. The built-in layers are:
+The Qt command center has a `World Map` tab and matching Dashboard controls for
+inspecting tracked state. Their checkboxes are generated from serializable
+`RenderLayer` objects, so layers can be hidden independently. The built-in
+layers are:
 
 ```text
 Robots
@@ -160,7 +201,7 @@ Ball
 Velocity arrows show `250 ms` of travel. Predicted-clearance circles are hidden
 by default and include both the requested horizon and current observation age.
 
-Future maps should provide their own layers without importing Qt:
+Render producers provide their own layers without importing Qt:
 
 ```python
 voronoi = RenderLayer(
@@ -170,24 +211,49 @@ voronoi = RenderLayer(
 render_data = world_map.get_render_data(extra_layers=(voronoi,))
 ```
 
-The canvas automatically adds a checkbox for the new layer.
+The canvases automatically add a checkbox for the new layer.
 
 The canvas starts with local field defaults, then switches to the latest
 `SSL_GeometryFieldSize` received from vision. A changed geometry updates the
 home field, world-map field, and calibration field without restarting the UI.
-Debug render frames are requested at `10 Hz` only while the `World Map` tab is
-visible, keeping the normal dashboard path lightweight.
+Debug render frames are requested at `10 Hz` while either the Dashboard or
+`World Map` tab is visible. The Dashboard hides duplicate `Robots` and `Ball`
+debug layers by default because the live field already draws those objects.
 
-## Voronoi Integration Plan
+## Dashboard Field Actions
 
-The next contained implementation steps are:
+The dashboard field owns the click-driven manual action layer:
 
-1. Convert `PlanningObstacle`s into clearance circles.
-2. Merge overlapping expanded circles into blocked clusters.
-3. Build a Voronoi graph from a frozen planning view.
-4. Reject graph edges that violate dynamic clearance.
-5. Follow only the next waypoint or short segment.
-6. Revalidate the immediate segment and replan when the live map changes.
+- `Click on Field` in ball placement mode sends a grSim ball replacement and
+  leaves an orange `X` at the requested point. Use this marker to manually align
+  the requested placement with the ball reported by vision. Once vision sees
+  the ball within the configured tolerance for `0.5 s`, the marker is treated as
+  confirmed and removed.
+- Left-clicking a robot selects that robot as the target for dashboard field
+  actions such as `Go to Ball`, `Go to Ball & Kick`, and `Go to Point`.
+- Right-click field actions reuse the Hardware Test action loop, but the main
+  window routes them through the same dashboard guard before any command starts.
+
+Dashboard placement and action commands are intentionally disabled unless the
+engine is running, the mode is not `6v6`, and `Send Commands to grSim` is on.
+This keeps the convenience layer out of competition mode and prevents field
+clicks from becoming an accidental real-robot command path. The Hardware Test
+tab remains the deliberate path for direct hardware testing.
+
+Potential bug to watch for: while visible, the orange placement `X` marks the
+requested grSim replacement point, not a verified vision measurement. If the X
+and the rendered ball disagree after vision catches up, check grSim/vision
+geometry and network ports before debugging the dashboard drawing.
+
+## Voronoi Integration
+
+The current Voronoi integration is split across two paths:
+
+- `PlannerAPI` runs inside the robot/skill process and owns per-robot waypoint
+  state.
+- `WorldMapRenderWorker` runs as a background process for UI/debug render data.
+- `WorldMap.get_planning_obstacles()` provides predicted obstacle snapshots for
+  both paths.
 
 The global planner proposes a route. The local navigator remains responsible
 for braking and replanning when moving obstacles invalidate that route.

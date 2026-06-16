@@ -1,6 +1,9 @@
+import warnings
+
 import pytest
 from types import SimpleNamespace
 
+from TeamControl.world.field_config import ROBOT_RADIUS_MM, SAFE_MARGIN
 from TeamControl.world.map.voronoi_generator import (
     VoronoiObstacle,
     edge_clearance_mm,
@@ -11,6 +14,16 @@ from TeamControl.world.map.voronoi_generator import (
 from TeamControl.world.map.voronoi_plot import save_voronoi_map_plot
 from TeamControl.world.map.world_map import WorldMap
 from TeamControl.world.snapshot import RobotSnapshot, WorldSnapshot, empty_robot_team
+
+
+def _warn_if_safe_margin_is_tiny() -> None:
+    if SAFE_MARGIN < 10.0:
+        warnings.warn(
+            f"WARNING: SAFE_MARGIN is getting lower than 10mm "
+            f"({SAFE_MARGIN:.1f}mm).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def test_generator_builds_closed_bounded_cells_for_requested_virtual_nodes():
@@ -182,15 +195,23 @@ def test_world_map_field_size_shapes_voronoi_bounds():
 
 
 def test_navigation_bounds_are_inset_from_real_field_bounds():
+    _warn_if_safe_margin_is_tiny()
+    min_clearance_mm = ROBOT_RADIUS_MM + SAFE_MARGIN
     voronoi_map = generate_bounded_voronoi_map(
         placement_mode="density_grid",
         density_percent=10.0,
         boundary_inset_mm=100.0,
     )
+    x_min, x_max, y_min, y_max = voronoi_map.bounds_mm
 
     assert voronoi_map.field_bounds_mm == (-4500.0, 4500.0, -3000.0, 3000.0)
     assert voronoi_map.bounds_mm == (-4400.0, 4400.0, -2900.0, 2900.0)
-    assert voronoi_map.clipped_bounds_mm == (-4280.0, 4280.0, -2780.0, 2780.0)
+    assert voronoi_map.clipped_bounds_mm == (
+        x_min + min_clearance_mm,
+        x_max - min_clearance_mm,
+        y_min + min_clearance_mm,
+        y_max - min_clearance_mm,
+    )
     assert voronoi_map.boundary_inset_mm == 100.0
 
 

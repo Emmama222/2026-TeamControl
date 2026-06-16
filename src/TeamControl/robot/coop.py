@@ -22,12 +22,14 @@ from TeamControl.robot.kick_engine import KickState, kick_tick
 from TeamControl.network.ssl_sockets import grSimSender
 from TeamControl.network.grSimPacketFactory import grSimPacketFactory
 from TeamControl.robot.constants import (
-    HALF_LEN, HALF_WID,
-    GOAL_HW, GOAL_DEPTH,
     KICK_RANGE, BALL_NEAR, BEHIND_DIST, AVOID_RADIUS,
     CRUISE_SPEED, CHARGE_SPEED, DRIBBLE_SPEED,
     MAX_W, TURN_GAIN,
     KICK_COOLDOWN, LOOP_RATE, FRAME_INTERVAL,
+)
+from TeamControl.world.field_config import (
+    get_live_half_length,
+    get_live_half_width,
 )
 
 
@@ -65,7 +67,8 @@ SUP_START       = HOME_BLUE
 BALL_TRIGGER    = BALL_START
 BALL_TRIGGER_R  = CLAIM_DIST
 SUP_SHOOT_SPOT  = HOME_BLUE
-GOAL_X          = HALF_LEN
+# GOAL_X was a frozen-at-import alias for HALF_LEN and was unused beyond
+# its own definition -- removed (see get_live_half_length() for the live value).
 
 
 # =====================================================================
@@ -302,9 +305,9 @@ def run_coop(is_running, dispatch_q, wm, robot_id, teammate_id,
                     dribble = 0
                 else:
                     # Clear — lock ball position, pick side, start arc
-                    if ball[1] > HALF_WID - 500:
+                    if ball[1] > get_live_half_width() - 500:
                         repo_side = -1
-                    elif ball[1] < -(HALF_WID - 500):
+                    elif ball[1] < -(get_live_half_width() - 500):
                         repo_side = 1
                     else:
                         repo_side = 1 if me[1] >= ball[1] else -1
@@ -357,7 +360,7 @@ def run_coop(is_running, dispatch_q, wm, robot_id, teammate_id,
                 time.sleep(LOOP_RATE)
                 continue
 
-            aim = (HALF_LEN, 0)
+            aim = (get_live_half_length(), 0)
             rel_aim = world2robot(me, aim)
             ang_to_aim = math.atan2(rel_aim[1], rel_aim[0])
 
@@ -393,7 +396,7 @@ def run_coop(is_running, dispatch_q, wm, robot_id, teammate_id,
             if is_yellow:
                 aim = mate_pos
             else:
-                aim = (HALF_LEN, 0)
+                aim = (get_live_half_length(), 0)
 
             # Intercept fast incoming ball
             rel_ball = world2robot(me, ball)

@@ -33,7 +33,8 @@ from TeamControl.ui.theme import (
 )
 from TeamControl.ui.field_canvas import FieldCanvas
 from TeamControl.network.robot_command import RobotCommand
-from TeamControl.robot.constants import HALF_LEN, HALF_WID, FIELD_MARGIN, MAX_W
+from TeamControl.robot.constants import FIELD_MARGIN, MAX_W
+from TeamControl.world.field_config import get_live_half_length, get_live_half_width
 from TeamControl.world.transform_cords import world2robot
 from TeamControl.robot.ball_nav import clamp, move_toward
 from TeamControl.utils.yaml_config import Config
@@ -105,11 +106,10 @@ class _SquareFieldContainer(QWidget):
 class CalibrationPage(QWidget):
     """Calibration tab — auto-learn speed scale and drift correction."""
 
-    def __init__(self, parent=None, engine=None, test_panel=None, pd_panel=None):
+    def __init__(self, parent=None, engine=None, test_panel=None):
         super().__init__(parent)
         self._engine = engine
         self._test_panel = test_panel
-        self._pd_panel = pd_panel
         self._our_id_spin = None
         self._robots = []
 
@@ -157,8 +157,6 @@ class CalibrationPage(QWidget):
 
         self._build_settings_card(inner)
         self._build_auto_card(inner)
-        if self._pd_panel is not None:
-            inner.addWidget(self._pd_panel)
         self._build_values_card(inner)
         self._build_log_card(inner)
 
@@ -199,8 +197,8 @@ class CalibrationPage(QWidget):
         self._stop_pose = None
         self._test_speed = 0.0
         self._line_y = 0.0          # ideal Y for drift measurement
-        self._field_half_len = HALF_LEN
-        self._field_half_wid = HALF_WID
+        self._field_half_len = get_live_half_length()
+        self._field_half_wid = get_live_half_width()
 
         self._ideal_heading = 0.0   # heading to hold during runs
 
