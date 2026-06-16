@@ -1,4 +1,3 @@
-import ast
 from pathlib import Path
 
 import yaml

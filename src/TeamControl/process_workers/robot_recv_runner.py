@@ -32,7 +32,7 @@ class RobotRecv(BaseWorker):
         self._queue = recv_queue
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((robot_ip, RECV_PORT))
+        sock.bind((robot_ip, RECV_PORT)) # use server's robot_ip address
         sock.settimeout(RECV_TIMEOUT)
         self._sock = sock
         msg = f"[RobotRecv] listening on {robot_ip},:{RECV_PORT}"

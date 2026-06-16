@@ -60,9 +60,8 @@ class WMWorker(BaseWorker):
         drained_gc = 0
         while not self.gc_q.empty() and drained_gc < 32:
             new_info = self.gc_q.get_nowait()
-            drained_gc += 1
             self.logger.info(f"[wmr] : Updating World Model Game Info {new_info[0]}")
-            self.wm.update_gc_data(new_info)
+            self.wm.update_game_data(new_info)
 
         if self.recv_q is not None:
             drained = 0

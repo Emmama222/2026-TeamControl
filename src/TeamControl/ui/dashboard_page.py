@@ -17,8 +17,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 
 from TeamControl.ui.theme import (
-    ACCENT, TEXT_DIM, SUCCESS, WARNING, DANGER, TEXT,
-    YELLOW_TEAM, BLUE_TEAM, BALL_COLOR,
+    ACCENT, TEXT_DIM, SUCCESS, WARNING, DANGER,
+    YELLOW_TEAM, BLUE_TEAM, BALL_COLOR, BORDER, BG_CARD,
 )
 
 
@@ -59,13 +59,43 @@ class DashboardPage(QWidget):
         root.setSpacing(0)
 
         splitter = QSplitter(Qt.Horizontal)
+
+        # ── Left: Field canvas (stretches) ────────────────────────
         splitter.addWidget(self._field)
 
-        # ── Right sidebar: read-only runtime monitor ──────────────
-        monitor = self._build_monitor_panel()
-        monitor.setMinimumWidth(260)
-        monitor.setMaximumWidth(480)
-        splitter.addWidget(monitor)
+        # ── Right: scrollable sidebar ─────────────────────────────
+        sidebar = QWidget()
+        sidebar.setMinimumWidth(320)
+        sidebar.setMaximumWidth(480)
+        sb_outer = QVBoxLayout(sidebar)
+        sb_outer.setContentsMargins(0, 0, 0, 0)
+        sb_outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        scroll_inner = QWidget()
+        sb_lay = QVBoxLayout(scroll_inner)
+        sb_lay.setContentsMargins(8, 8, 8, 8)
+        sb_lay.setSpacing(8)
+
+        # --- Robot table card ---
+        self._build_robot_card(sb_lay)
+
+        # --- Game state card ---
+        self._build_game_card(sb_lay)
+
+        # --- Network card ---
+        self._build_network_card(sb_lay)
+
+        # --- Calibration card (hidden until a non-vision mode starts) ---
+        self._build_cal_card(sb_lay)
+
+        sb_lay.addStretch()
+        scroll.setWidget(scroll_inner)
+        sb_outer.addWidget(scroll)
+        splitter.addWidget(sidebar)
+
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
         splitter.setCollapsible(0, False)

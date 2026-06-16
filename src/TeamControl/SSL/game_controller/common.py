@@ -11,40 +11,58 @@ class PacketType(Enum): # for message sending onto gc_queue
     GC_STATUS = auto()
     SWITCH_TEAM = auto()
     BLF_LOCATION = auto()
+    BALL_PLACEMENT_POS = auto()  # designated_position from referee message
+    GC_STATUS = auto()           # full referee status snapshot
 
 class GameState(Enum):
     HALTED = auto()
     STOPPED = auto()
     RUNNING = auto()
 
-    # Kickoff
-    OUR_PREPARE_KICKOFF = auto()
-    ENEMY_PREPARE_KICKOFF = auto()
-    OUR_KICKOFF = auto()
-    ENEMY_KICKOFF = auto()
+    # # Kickoff
+    # OUR_PREPARE_KICKOFF = auto()
+    # ENEMY_PREPARE_KICKOFF = auto()
+    # OUR_KICKOFF = auto()
+    # ENEMY_KICKOFF = auto()
 
 
-	# free kick
-    OUR_FREE_KICK = auto()
-    ENEMY_FREE_KICK = auto()
+	# # free kick
+    # OUR_FREE_KICK = auto()
+    # ENEMY_FREE_KICK = auto()
 
-    # ball placement
-    OUR_BALL_PLACEMENT = auto()
-    ENEMY_BALL_PLACEMENT = auto()
+    # # ball placement
+    # OUR_BALL_PLACEMENT = auto()
+    # ENEMY_BALL_PLACEMENT = auto()
 
-	# half time / timeout
+	# # half time / timeout
+    # HALF_TIME = auto()
+    # OUR_TIME_OUT = auto()
+    # ENEMY_TIME_OUT = auto()
+
+	# # Penalty Shootout
+    # OUR_PREPARE_PENALTY = auto()
+    # ENEMY_PREPARE_PENALTY = auto()
+    # OUR_PENALTY_SHOOTOUT = auto()
+    # ENEMY_PENALTY_SHOOTOUT = auto()
+
+    # #subsitution ? in the future...
+
+    PREPARE_KICKOFF = auto()
+    OPP_KICKOFF = auto()
+
+    FREE_KICK = auto()
+    OPP_FREE_KICK = auto()
+    BALL_PLACEMENT = auto()
+    KICKOFF = auto()
+    
     HALF_TIME = auto()
-    OUR_TIME_OUT = auto()
-    ENEMY_TIME_OUT = auto()
-
-	# Penalty Shootout
-    OUR_PREPARE_PENALTY = auto()
-    ENEMY_PREPARE_PENALTY = auto()
-    OUR_PENALTY_SHOOTOUT = auto()
-    ENEMY_PENALTY_SHOOTOUT = auto()
-
-    #subsitution ? in the future...
-
+    # TIME_OUT = auto()
+    
+    PREPARE_PENALTY = auto()
+    PREPARE_PENALTY_OPP = auto()
+    PENALTY_SHOOT = auto()
+    PENALTY_DEFEND = auto()
+    
 
 """
 The following is obtained from gc_referee_message.proto

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QToolBar,
     QWidget,
 )
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QIcon
 
 from TeamControl.ui.calibration_page import CalibrationPage
@@ -227,7 +228,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Exit", self.close)
 
         view_menu = mb.addMenu("View")
-        view_menu.addAction("Reset Field View", self._reset_field_view)
+        view_menu.addAction("Reset Field View", self._field._zoom_fit)
         view_menu.addSeparator()
         view_menu.addAction(
             "Calibration",

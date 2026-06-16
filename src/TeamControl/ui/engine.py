@@ -235,20 +235,15 @@ class SimEngine(QObject):
         self._wm_manager.start()
         self._wm = self._wm_manager.WorldModel()
 
-        self._bg_procs = []
-        if defaults["vision"]:
-            self._bg_procs.append(
-                Process(target=VisionProcess.run_worker,
-                        args=(self._is_running, None, self._vision_q,
-                              preset.use_grSim_vision, preset.vision[1]),
-                        daemon=True))
-        if defaults["gc"]:
-            self._bg_procs.append(
-                Process(target=GCfsm.run_worker,
-                        args=(self._is_running, None, self._gc_q,
-                              preset.us_yellow, preset.us_positive),
-                        daemon=True))
-        self._bg_procs.append(
+        self._bg_procs = [
+            Process(target=VisionProcess.run_worker,
+                    args=(self._is_running, None, self._vision_q,
+                          preset.use_grSim_vision, preset.vision[1]),
+                    daemon=True),
+            Process(target=GCfsm.run_worker,
+                    args=(self._is_running, None, self._gc_q,
+                          preset.us_yellow, preset.us_positive),
+                    daemon=True),
             Process(target=WMWorker.run_worker,
                     args=(self._is_running, None, self._wm,
                           self._vision_q, self._gc_q,
