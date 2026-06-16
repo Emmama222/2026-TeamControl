@@ -12,20 +12,23 @@ import math
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.world.transform_cords import world2robot
 from TeamControl.robot.ball_nav import (
-    clamp, move_toward, wall_brake, rotation_compensate,
+    clamp, move_toward, rotation_compensate,
 )
 from TeamControl.robot.navigator import _compute_avoidance
 from TeamControl.robot.kick_engine import KickState, kick_tick
 from TeamControl.cache import TickCache
 from TeamControl.robot.constants import (
-    FIELD_LENGTH, HALF_LEN, HALF_WID,
-    GOAL_WIDTH, GOAL_HW, GOAL_DEPTH,
-    PENALTY_DEPTH, PENALTY_HW,
     KICK_RANGE, BALL_NEAR, BEHIND_DIST, AVOID_RADIUS,
     CRUISE_SPEED, CHARGE_SPEED, DRIBBLE_SPEED,
     MAX_W, TURN_GAIN,
     KICK_COOLDOWN, LOOP_RATE, FRAME_INTERVAL,
-    DEFENSE_DEPTH, POSSESS_DIST
+    DEFENSE_DEPTH,POSSESS_DIST,
+)
+from TeamControl.world.field_config import (
+    get_live_goal_half_width,
+    get_live_goal_depth,
+    get_live_penalty_depth,
+    get_live_penalty_half_width,
 )
 
 # -- Tuning ---------------------------------------------------------------
@@ -36,13 +39,13 @@ BALL_MEMORY_TIME = 0.5    # seconds to trust last-known ball when occluded
 
 
 def _in_penalty_box(px, py, goal_x):
-    return abs(px - goal_x) < PENALTY_DEPTH and abs(py) < PENALTY_HW
+    return abs(px - goal_x) < get_live_penalty_depth() and abs(py) < get_live_penalty_half_width()
 
 
 def _pick_aim(cache, ball, goal_x, is_yellow):
     """Pick aim point in goal mouth, away from opponent goalie."""
     aim_inward = 1 if goal_x > 0 else -1
-    aim_x = goal_x + aim_inward * (GOAL_DEPTH * 0.5)
+    aim_x = goal_x + aim_inward * (get_live_goal_depth() * 0.5)
 
     gk_y = None
     for _oid, pos in cache.robots.iter_team(not is_yellow):
@@ -51,7 +54,8 @@ def _pick_aim(cache, ball, goal_x, is_yellow):
             break
 
     if gk_y is not None:
-        aim_y = -GOAL_HW * 0.6 if gk_y > 0 else GOAL_HW * 0.6
+        goal_hw = get_live_goal_half_width()
+        aim_y = -goal_hw * 0.6 if gk_y > 0 else goal_hw * 0.6
     else:
         aim_y = 0.0
 
@@ -157,9 +161,6 @@ def run_striker(is_running, dispatch_q, wm, robot_id=0, is_yellow=True):
                 w = 0.0
             else:
                 w = clamp(ang_ball * TURN_GAIN, -MAX_W, MAX_W)
-
-        # -- Wall braking -----------------------------------------------
-        vx, vy = wall_brake(rpos[0], rpos[1], vx, vy)
 
         # -- Rotation compensation --------------------------------------
         vx, vy = rotation_compensate(vx, vy, w)
