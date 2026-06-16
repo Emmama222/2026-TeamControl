@@ -96,8 +96,8 @@ mv.is_facing_dir(current_theta, target_theta, threshold_rad=0.1)
 mv.rotational_motion(current_theta, target_theta, deadline)
 
 # Drive only. Returns (vx, vy) in robot frame, m/s.
-# field_limit=True activates dynamic braking near the field boundary.
-mv.translational_motion(current_pos, target_xy, deadline, field_limit=True)
+# stay_in_field=True activates dynamic braking near the field boundary.
+mv.translational_motion(current_pos, target_xy, deadline, stay_in_field=True)
 
 # Option C: guarded combined movement. Returns (vx, vy, w).
 mv.general_motion(current_pos, target_xy, target_theta, deadline)
@@ -105,39 +105,33 @@ mv.general_motion(current_pos, target_xy, target_theta, deadline)
 
 ---
 
-## Field-Boundary Enforcement (`field_limit`)
+## Field-Boundary Enforcement (`stay_in_field`)
 
-Pass `field_limit=True` to `translational_motion` whenever the robot should
-stay on the field.  The controller applies two stages **after** the accel
-limiter:
+Pass `stay_in_field=True` to `translational_motion` whenever the robot should
+stay on the field. (Renamed from `field_limit` — same parameter, clearer
+name.) This routes through `ball_nav.apply_boundary_braking` (the shared
+motion-rule layer used by every controller, not just the PD one), which
+applies four stages **after** the accel limiter, all tunable in
+`field_config.py`:
 
-### Stage 1 — Dynamic braking (inside field, within decel zone)
+### Stage 1 — Decel zone (inside field, within the zone)
 
 When the robot is inside the field but within `VORONOI_BOUNDARY_DECEL_ZONE_MM`
-of any boundary edge, the commanded velocity is capped to the physically safe
-maximum:
+(default 400 mm) of any boundary edge, speed is capped with a **linear
+ramp** — full speed at the zone's outer edge, down to
+`VORONOI_BOUNDARY_NEAR_SPEED_SCALE` (default 0.05, i.e. 5% of `MAX_SPEED`)
+right at the wall:
 
 ```text
-v_max = sqrt(2 × LINEAR_AMAX × dist_to_boundary_m)
+t = dist_to_boundary / VORONOI_BOUNDARY_DECEL_ZONE_MM
+v_max = MAX_SPEED × (NEAR_SPEED_SCALE + t × (1 − NEAR_SPEED_SCALE))
 ```
 
-This is the speed from which the robot can brake to a stop exactly at the
-boundary using `LINEAR_AMAX` (2.105 m/s²).  The PD controller may compute a
-higher speed; this cap overrides it.
-
-Example speeds at key distances (`LINEAR_AMAX = 2.105 m/s²`):
-
-| Distance to boundary | Dynamic v_max |
-|---|---|
-| 200 mm (zone edge) | 0.92 m/s |
-| 100 mm | 0.65 m/s |
-| 50 mm | 0.46 m/s |
-| 20 mm | 0.29 m/s |
-| 0 mm | 0 m/s |
-
-`VORONOI_BOUNDARY_DECEL_ZONE_MM` (default 200 mm, tunable in `field_config.py`)
-controls how far from the boundary the cap becomes active.  Increase it if the
-robot still overshoots at high speed approaching the boundary.
+The PD controller may compute a higher speed; this cap overrides it. This
+is a simple linear ramp, not a physics-derived stopping-distance curve —
+`regulate_speed_to_target`'s `sqrt(2 × LINEAR_AMAX × dist)` cap (see below)
+is the one place that formula is actually used, for never-overshooting a
+*target*, not the field boundary.
 
 ### Stage 2 — Out-of-field crawl (outside field)
 
@@ -145,6 +139,20 @@ If the robot is already outside the field, velocity is multiplied by
 `VORONOI_OUT_OF_FIELD_SPEED_SCALE` (default 0.1).  This is a safety backstop
 so momentum is killed quickly; the navigator also overrides the movement target
 to the nearest boundary point to actively return the robot.
+
+### Stage 3 — Hard stop
+
+Regardless of which stage above fired, any velocity component pointing
+further into a boundary the robot is already within
+`VORONOI_BOUNDARY_HARD_STOP_MM` (default 30 mm) of is zeroed outright — the
+final guarantee the robot never drives further out.
+
+### Stage 4 — Goal-post zone
+
+Past either end line, within `GOAL_HALF_WIDTH_MM + ROBOT_RADIUS` of the
+center line (i.e. lined up with the goal mouth), the x-component driving
+further into the physical goal structure is zeroed — it's a hard obstacle,
+not a soft boundary like the rest of the field edge.
 
 ---
 
