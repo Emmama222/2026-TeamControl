@@ -16,8 +16,8 @@ _TUNING_PATH = os.path.normpath(_TUNING_PATH)
 
 def _load_tuning():
     defaults = {
-        "max_speed": 5.0, # testing recommend 1.0, want fast in test irl 3.0
-        "max_w_raw": 1,
+        "max_speed": 1.0, # testing recommend 1.0, want fast in test irl 3.0
+        "max_w_raw": 3,
         "w_clamp_pct": 0.60,
         "manual_max_w": 10.0,
         "turn_gain": 0.8,
@@ -29,9 +29,9 @@ def _load_tuning():
         "angular_fast_speed": 0.6,
         "turn_kp": 1.0,
         "turn_kd": 0.1,
-        "linear_kp": 0.002,
-        "linear_kd": 0.0005,
-        "angle_epsilon": 0.1,
+        "linear_kp": 1.2,
+        "linear_kd": 0.8,
+        "angle_epsilon": 0.015,
     }
     try:
         with open(_TUNING_PATH, "r") as f:
@@ -46,23 +46,23 @@ def _load_tuning():
 _t = _load_tuning()
 
 # ═════════════════════════════════════════════════════════════════
-#  FIELD GEOMETRY (mm) — SSL Division B field 9000 × 6000
+#  FIELD GEOMETRY
 # ═════════════════════════════════════════════════════════════════
+#
+# Field bounds, penalty box, and goal geometry are NOT defined here at
+# all -- world.field_config.py is the single source of truth (the same
+# live-geometry system world_map.py feeds from real SSL-Vision packets).
+# Call field_config.get_live_bounds() / get_live_half_length() /
+# get_live_half_width() / get_live_penalty_depth() /
+# get_live_penalty_half_width() / get_live_goal_half_width() /
+# get_live_goal_depth() / get_live_max_advance() directly -- don't
+# reintroduce a second, independently-hardcoded copy of these numbers here.
 
-FIELD_LENGTH      = 4500
-FIELD_WIDTH       = 2230
-HALF_LEN          = FIELD_LENGTH / 2
-HALF_WID          = FIELD_WIDTH / 2
-GOAL_WIDTH        = 1000
-GOAL_HW           = GOAL_WIDTH / 2
-GOAL_DEPTH        = 180
+CENTER_RADIUS     = 500      # mm — center circle radius (not in field_config; fixed by rules)
+FIELD_MARGIN      = 300      # mm — generic clamp margin, not a field measurement
 
-PENALTY_DEPTH     = 500
-PENALTY_WIDTH     = 1000
-PENALTY_HW        = PENALTY_WIDTH / 2
-CENTER_RADIUS     = 500
-FIELD_MARGIN      = 300
-
+# Tactical "how far back to defend" zone (team.py positioning heuristics) --
+# not an actual measured field feature, no field_config equivalent.
 DEFENSE_DEPTH     = 1200
 DEFENSE_HALF_WIDTH = 1200
 
@@ -108,7 +108,8 @@ KICK_DIST         = 190      # alias used by goalie
 BALL_NEAR         = 450      # "close to ball" threshold
 BEHIND_DIST       = 280      # lineup distance behind ball
 AVOID_RADIUS      = 500      # swing-around radius
-MAX_ADVANCE       = PENALTY_DEPTH - 50  # goalie must stay inside penalty box
+# MAX_ADVANCE (goalie must stay inside penalty box) is computed live --
+# see field_config.get_live_max_advance().
 
 PRESSURE_DIST     = 500      # mm — opponent "under pressure" radius
 PASS_CLEAR        = 400      # mm — pass lane clearance
@@ -129,12 +130,10 @@ LINEAR_KD         = _t["linear_kd"]   # mm/s -> m/s
 ANGLE_EPSILON     = _t["angle_epsilon"]  # deadband below which ω = 0
 BLEND_DIST        = 300.0                # mm — below this, full rotation allowed
 
-# NOTE: MAX_W (above) caps PD angular output at 0.30 rad/s via W_CLAMP_PCT.
-# The legacy tuning values angular_normal_speed=0.5 / angular_fast_speed=0.6
-# (stored in tuning.json) exceed this limit — they are used only in the
-# proportional behaviour layer (ball_nav / Movement.py), not in the PD
-# controller.  Raise MAX_W_RAW or W_CLAMP_PCT in tuning.json to
-# increase the PD controller's angular ceiling.
+# NOTE: MAX_W (above) is the shared angular-velocity ceiling used by every
+# motion controller (RobotMotionController, ball_nav, Movement.py) —
+# MAX_W_RAW=1.667 * W_CLAMP_PCT=0.60 = 1.0 rad/s in tuning.json today.
+# Raise MAX_W_RAW or W_CLAMP_PCT in tuning.json to change it for everyone.
 
 # ─────────────────────────────────────────────────────────────────
 #  PD HARDWARE COMPENSATION DEFAULTS
@@ -147,6 +146,18 @@ MIN_W             = 0.0    # rad/s — minimum angular command (dead-zone floor)
 
 LINEAR_AMAX       = 2.105  # m/s²   — max linear acceleration / deceleration
 ANGULAR_AMAX      = 28.4   # rad/s² — max angular acceleration / deceleration
+
+# Both LINEAR_AMAX and MAX_SPEED are wheel-derived: 10 rev/s and 10 rev/s²
+# firmware locks per wheel, 33.5mm wheel radius ->
+# 2*pi*0.0335*10 ≈ 2.105 (used for both since the two rev/s figures match).
+# ANGULAR_AMAX similarly reflects the firmware-locked hardware ceiling —
+# documentation/reference only, not derived live from wheel geometry here.
+
+# Share of the wheel speed/accel budget rotation may claim when a robot's
+# wheel-spec calibration is active (RobotMotionController only — this is
+# the only place that per-wheel budget concept exists). Keeps translation
+# prioritized over spinning: see wheel_kinematics.max_angular_from_wheel_budget.
+PD_ANGULAR_WHEEL_BUDGET_SHARE = 0.015
 
 # Threshold zones for go_to_target (mm)
 KICKER_ZONE        = 70       # below this, speed is 0
@@ -164,7 +175,7 @@ FACE_TARGET_ANGLE_RAD = 0.2   # rad — angle error above which translation is s
 SHOT_SPEED        = 500      # mm/s — incoming shot detection
 CLEAR_BALL_SPEED  = 450      # mm/s — clearable ball speed
 CLEAR_BALL_DIST   = 1100     # mm — go clear if this close
-DANGER_ZONE       = HALF_LEN # mm — ball in our half
+# DANGER_ZONE was an unused HALF_LEN alias -- removed; nothing referenced it.
 ONETOUCH_MIN_SPEED = 300     # mm/s — min ball speed for one-touch
 BALL_MOVING_THRESH = 150     # mm/s — ball considered moving
 

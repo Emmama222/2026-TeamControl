@@ -30,7 +30,13 @@ from TeamControl.cache import TickCache
 from TeamControl.network.robot_command import RobotCommand
 from TeamControl.planner import PlannerAPI, PlannerInput
 from TeamControl.planner.voronoi_dijkstra import is_in_penalty_box
-from TeamControl.robot.ball_nav import clamp, rotation_compensate, sanitize_field_target
+from TeamControl.robot.ball_nav import (
+    clamp,
+    compute_ball_clearance_target,
+    compute_out_of_bounds_clearance,
+    rotation_compensate,
+    sanitize_field_target,
+)
 from TeamControl.robot.constants import (
     CRUISE_SPEED,
     FACE_TARGET_ANGLE_RAD,
@@ -67,6 +73,14 @@ CHASE_SPEED = CRUISE_SPEED * VORONOI_CHASE_SPEED_SCALE
 PRECISION_APPROACH_SPEED = CRUISE_SPEED * VORONOI_PRECISION_SPEED_SCALE
 WAYPOINT_REACHED_MM = VORONOI_WAYPOINT_REACHED_MM
 
+# SSL's standard ball-clearance distance -- used both when the ball has
+# left the field (stay clear of the ball and the line it crossed) and
+# when an opponent has just gained possession (back off before stealing).
+CLEARANCE_MM = 500.0
+# How long to hold the clearance distance after an opponent gains
+# possession before switching to an active steal attempt.
+STEAL_DELAY_S = 1.0
+
 
 def run_voronoi_game_navigator(
     is_running,
@@ -89,12 +103,34 @@ def run_voronoi_game_navigator(
     # Exponential-smoothed output velocities — never jump between ticks.
     sm_vx, sm_vy, sm_w = 0.0, 0.0, 0.0
 
+    # When an opponent first gains possession in front of us: timestamp,
+    # cleared once they no longer qualify (lost the ball, we moved away, ...).
+    possession_since = None
+
     while is_running.is_set():
         now = time.time()
         if not cache.refresh(now):
             time.sleep(LOOP_RATE)
             continue
+
+        rpos = cache.robots.get_position(is_yellow, robot_id)
+        if rpos is None:
+            time.sleep(LOOP_RATE)
+            continue
+
         if not cache.ball.visible:
+            # Ball out of bounds: back off to a point that's >= CLEARANCE_MM
+            # from both the ball's exit spot and the line it crossed,
+            # instead of just freezing in place.
+            if getattr(wm, "last_ball_rejection_reason", None) == "out_of_bounds":
+                exit_pos = getattr(wm, "possible_ball_left_field_pos_mm", None)
+                if exit_pos is not None:
+                    _drive_to_clearance(
+                        motion_ctrl, dispatch_q, rpos, exit_pos,
+                        robot_id, is_yellow,
+                    )
+                    time.sleep(LOOP_RATE)
+                    continue
             _send_stop(dispatch_q, robot_id, is_yellow)
             time.sleep(LOOP_RATE)
             continue

@@ -2,18 +2,30 @@
 # Active game behaviour (striker, goalie, navigator, team) uses ball_nav.move_toward() instead.
 #
 # Known issues in this file:
-#   - PDController class below is a duplicate of TeamControl.robot.motion.pd.PDController.
-#     Prefer the canonical version for any new code.
+#   - PDController class below is a standalone copy, kept as-is. Do not add new callers.
 #   - calculateBallVelocity() speed levels (0.02–0.10) are 10x too low; actual m/s values
 #     should be in the 0.2–1.0 range.  Do not rely on it for real robot speeds.
-#   - For new precise go-to-point behaviour use motion/controller.py (RobotMotionController)
-#     which includes per-robot hardware compensation and deadline-based speed scaling.
+#   - For new movement code, use ball_nav.move_toward() (see docs/motion-strategy.md).
+#
+# Un-frozen for one specific purpose: RobotMovement.velocity_to_target() now
+# calls the shared motion rules in ball_nav.py (FieldGeometryCache,
+# clamp_for_role, apply_boundary_braking) via an opt-in stay_in_field
+# parameter, same as RobotMotionController and ball_nav.move_toward -- so
+# every motion controller in the repo follows the same rule set. The
+# embedded PDController class itself is untouched/still "do not add new
+# callers" -- this is only about adopting the shared geometric rules.
 import math
 import time
 from typing import Tuple, Optional
 
 from TeamControl.world.transform_cords import world2robot
 from TeamControl.robot import constants as C
+from TeamControl.robot.ball_nav import (
+    FieldGeometryCache,
+    apply_boundary_braking,
+    clamp_for_role,
+    regulate_speed_to_target,
+)
 
 
 
@@ -220,18 +232,28 @@ class RobotMovement:
             kd=C.LINEAR_KD if linear_kd is None else linear_kd,
             out_limit=C.MAX_SPEED,
         )
+        # Shared motion rules (ball_nav.py) -- field-size cache and role,
+        # same as RobotMotionController. Opt-in via stay_in_field below.
+        self._field_cache = FieldGeometryCache()
+        self.is_goalie = False
 
     def reset(self) -> None:
         """Clear PD history. Call when target changes abruptly or robot stops."""
         self.angular_pd.reset()
         self.linear_pd.reset()
 
+    def set_role(self, is_goalie: bool) -> None:
+        """Set whether this robot is the goalie (used by stay_in_field's
+        penalty-box clamp: goalie stays in, non-goalie stays out)."""
+        self.is_goalie = bool(is_goalie)
+
     def velocity_to_target(self,
                            robot_pos: Tuple[float, float, float],
                            target: Tuple[float, float],
                            turning_target: Optional[Tuple[float, float]] = None,
                            speed: Optional[float] = None,
-                           stop_threshold: float = 150.0
+                           stop_threshold: float = 150.0,
+                           stay_in_field: bool = False,
                            ) -> Tuple[float, float, float]:
         """
         Top-level driver: given where the robot is in the world, compute the
@@ -248,9 +270,20 @@ class RobotMovement:
             means. Once everything is in the robot frame, +x is "in front
             of me", +y is "to my left", so vx/vy/w map straight to motor
             commands.
+
+        stay_in_field=True applies the same shared rules as
+        RobotMotionController/ball_nav.move_toward: field-size-change
+        awareness, goalie/non-goalie penalty-box clamping, and field-
+        boundary dynamic braking (including the goal-post no-go zone).
         """
         if robot_pos is None or target is None:
             raise ValueError("Robot pos or Target is None")
+
+        # Rule: aware of any change in field geometry.
+        self._field_cache.refresh()
+
+        if stay_in_field:
+            target = clamp_for_role(target, self.is_goalie)
 
         # Where is the target relative to me, right now? (mm in robot frame)
         trans_target = world2robot(robot_pos, target)
@@ -264,6 +297,9 @@ class RobotMovement:
         else:
             trans_turn = world2robot(robot_pos, turning_target)
             w = self.turn_to_target(trans_turn)
+
+        if stay_in_field:
+            vx, vy = apply_boundary_braking(robot_pos, vx, vy)
 
         return vx, vy, w
 
@@ -365,6 +401,16 @@ class RobotMovement:
         mag = math.hypot(vx, vy)
         if mag > zone_cap and mag > 0:
             s = zone_cap / mag
+            vx *= s
+            vy *= s
+
+        # Rule: never overshoot -- stateless sqrt(2*a*d) cap (see
+        # ball_nav.regulate_speed_to_target), shared with every other
+        # motion controller. Wins over the zone cap above if tighter.
+        mag = math.hypot(vx, vy)
+        regulated = regulate_speed_to_target(dist, mag, C.LINEAR_AMAX)
+        if mag > 0.0 and regulated < mag:
+            s = regulated / mag
             vx *= s
             vy *= s
         return vx, vy

@@ -23,10 +23,10 @@ from TeamControl.robot.ball_nav import (
 )
 from TeamControl.cache import TickCache
 from TeamControl.robot.constants import (
-    FIELD_LENGTH, FIELD_WIDTH, HALF_LEN, HALF_WID,
     CRUISE_SPEED, SPRINT_SPEED, MAX_W, TURN_GAIN,
     LOOP_RATE, FRAME_INTERVAL,
 )
+from TeamControl.world.field_config import get_live_half_length, get_live_half_width
 
 # ── Obstacle avoidance tuning ────────────────────────────────────
 AVOID_DIST = 550          # start avoiding at this range (mm)
@@ -45,18 +45,22 @@ CHASE_SPEED = CRUISE_SPEED * 0.85   # smooth, moderate pace
 NEAR_BALL_DIST = 300                # start slowing down here
 STOP_DIST = 80                      # stop this close to ball
 
-# Keep old exports so main.py import doesn't break
+# Keep old exports so main.py import doesn't break. Computed once at import
+# time from whatever field size is live then -- test/demo waypoints only,
+# not worth the live-recompute machinery the real navigators use.
+_half_len = get_live_half_length()
+_half_wid = get_live_half_width()
 WAYPOINTS_A = [
-    (HALF_LEN - 500, HALF_WID - 200),
-    (HALF_LEN - 500, -HALF_WID + 200),
-    (-HALF_LEN + 500, -HALF_WID + 200),
-    (-HALF_LEN + 500, HALF_WID - 200),
+    (_half_len - 500, _half_wid - 200),
+    (_half_len - 500, -_half_wid + 200),
+    (-_half_len + 500, -_half_wid + 200),
+    (-_half_len + 500, _half_wid - 200),
 ]
 WAYPOINTS_B = [
-    (-HALF_LEN + 500, -HALF_WID + 200),
-    (-HALF_LEN + 500, HALF_WID - 200),
-    (HALF_LEN - 500, HALF_WID - 200),
-    (HALF_LEN - 500, -HALF_WID + 200),
+    (-_half_len + 500, -_half_wid + 200),
+    (-_half_len + 500, _half_wid - 200),
+    (_half_len - 500, _half_wid - 200),
+    (_half_len - 500, -_half_wid + 200),
 ]
 
 

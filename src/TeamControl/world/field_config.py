@@ -1,10 +1,10 @@
 # configurations of field
 TEAM_IS_POSITIVE = True
 
-FIELD_LENGTH_MM = 9000
-FIELD_WIDTH_MM = 6000
+FIELD_LENGTH_MM = 4000
+FIELD_WIDTH_MM = 3000
 DEFENCE_X_MM = 1000
-DEFENCE_Y_MM = 2000
+DEFENCE_Y_MM = 1000
 
 GOAL_WIDTH_MM = 1000          # total opening between the two posts
 GOAL_HALF_WIDTH_MM = 500      # ± Y from field centre
@@ -55,7 +55,7 @@ VORONOI_TARGET_STOP_MM = 80.0
 VORONOI_TARGET_OFFSET_MM = VORONOI_TARGET_STOP_MM      # stop this far from the ball in planner-test mode
 VORONOI_OUT_OF_FIELD_SPEED_SCALE = 0.1                 # velocity multiplier when robot is outside field
 VORONOI_BOUNDARY_DECEL_ZONE_MM = 400.0                 # mm inside boundary where linear ramp begins
-VORONOI_BOUNDARY_NEAR_SPEED_SCALE = 0.10               # speed floor (fraction of MAX_SPEED) at the boundary wall
+VORONOI_BOUNDARY_NEAR_SPEED_SCALE = 0.05               # speed floor (fraction of MAX_SPEED) at the boundary wall
 VORONOI_BOUNDARY_HARD_STOP_MM = 30.0                   # zero boundary-approaching velocity within this distance
 VORONOI_FIELD_TARGET_MARGIN_MM = 150.0
 VORONOI_PRECISION_RAMP_DIST_MM = 260.0
@@ -71,7 +71,10 @@ VORONOI_STEAL_FRONT_ANGLE_RAD = 0.35
 # ---------------------------------------------------------------------------
 # Live field bounds
 # Updated when an SSL-Vision geometry packet arrives (via update_live_bounds).
-# Falls back to the hardcoded 9000 × 6000 mm defaults until then.
+# Falls back to the hardcoded FIELD_LENGTH_MM x FIELD_WIDTH_MM defaults
+# until then -- robot/constants.py's HALF_LEN/FIELD_LENGTH etc. read this
+# same live state (via __getattr__), so there's a single source of truth
+# for field size instead of two independently-hardcoded values.
 # ---------------------------------------------------------------------------
 _live_bounds: tuple[float, float, float, float] = (
     float(FIELD_X_MIN), float(FIELD_X_MAX),
@@ -83,9 +86,46 @@ def get_live_bounds() -> tuple[float, float, float, float]:
     """Return (x_min, x_max, y_min, y_max) in mm.
 
     Uses real SSL-Vision field dimensions once geometry has been received;
-    falls back to the 9000 × 6000 mm defaults until then.
+    falls back to the FIELD_LENGTH_MM x FIELD_WIDTH_MM defaults until then.
     """
     return _live_bounds
+
+
+def get_live_half_length() -> float:
+    """Half the live field length (mm) -- x_max from get_live_bounds()."""
+    _, x_max, _, _ = get_live_bounds()
+    return x_max
+
+
+def get_live_half_width() -> float:
+    """Half the live field width (mm) -- y_max from get_live_bounds()."""
+    _, _, _, y_max = get_live_bounds()
+    return y_max
+
+
+def get_live_penalty_depth() -> float:
+    """Live penalty-box depth (mm) -- defence_x from get_live_defence()."""
+    return get_live_defence()[0]
+
+
+def get_live_penalty_half_width() -> float:
+    """Live penalty-box half-width (mm) -- defence_y from get_live_defence()."""
+    return get_live_defence()[1]
+
+
+def get_live_goal_half_width() -> float:
+    """Live goal half-width (mm) -- goal_half_width from get_live_defence()."""
+    return get_live_defence()[2]
+
+
+def get_live_goal_depth() -> float:
+    """Live goal depth (mm) -- goal_depth from get_live_defence()."""
+    return get_live_defence()[3]
+
+
+def get_live_max_advance(margin: float = 50.0) -> float:
+    """Goalie's own-box advance limit -- penalty depth minus a clearance margin."""
+    return get_live_penalty_depth() - margin
 
 
 def update_live_bounds(field_length_mm: float, field_width_mm: float) -> None:

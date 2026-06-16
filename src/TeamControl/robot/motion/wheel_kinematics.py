@@ -117,6 +117,31 @@ def body_velocity_from_wheel_speeds(
     return _solve_3x3(jtj, jts)
 
 
+def max_angular_from_wheel_budget(
+    robot_radius_m: float,
+    max_wheel_speed_mps: float,
+    share: float,
+) -> float:
+    """Angular-velocity ceiling from rotation's share of the wheel budget.
+
+    A pure rotation's wheel-speed contribution is always exactly
+    ``robot_radius_m * w`` on every wheel, regardless of wheel angle (the
+    w-column of the Jacobian is the same robot_radius_m value for every
+    row -- see _wheel_jacobian_row). So if rotation may only claim
+    ``share`` of the total wheel speed budget (translation gets the
+    rest), the angular ceiling is just::
+
+        w_max = (share * max_wheel_speed_mps) / robot_radius_m
+
+    Used by RobotMotionController to keep spinning from eating into the
+    wheel budget translation needs, once a robot's wheel spec is
+    calibrated (max_wheel_speed_mps not None).
+    """
+    if robot_radius_m <= 0.0:
+        return 0.0
+    return (share * max_wheel_speed_mps) / robot_radius_m
+
+
 def scale_to_wheel_speed_limit(
     vx: float,
     vy: float,
