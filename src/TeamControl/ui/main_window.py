@@ -34,7 +34,6 @@ from TeamControl.ui.engine import SimEngine
 from TeamControl.ui.log_panel import LogPanel
 from TeamControl.ui.map_canvas import MapCanvas, MapDebugWidget
 from TeamControl.ui.onboard_possession_panel import OnboardPossessionPanel
-from TeamControl.ui.pd_calibration_page import PDCalibrationPage
 from TeamControl.ui.settings_page import SettingsPage
 from TeamControl.ui.test_panel import TestPanel
 from TeamControl.ui.theme import ACCENT, DANGER, QSS, SUCCESS, TEXT, TEXT_DIM, WARNING
@@ -59,11 +58,9 @@ class MainWindow(QMainWindow):
         # ── Pages ─────────────────────────────────────────────────
         self._test_panel = TestPanel(engine=self._engine, field=self._field)
         self._dispatch_panel = DispatcherPanel(engine=self._engine)
-        self._pd_calibration = PDCalibrationPage(engine=self._engine)
         self._calibration = CalibrationPage(
             engine=self._engine,
             test_panel=self._test_panel,
-            pd_panel=self._pd_calibration,
         )
         self._dashboard = DashboardPage(
             self._field, engine=self._engine, test_panel=self._test_panel,

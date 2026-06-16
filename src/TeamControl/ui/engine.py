@@ -33,6 +33,7 @@ from TeamControl.robot.striker import run_striker
 from TeamControl.robot.navigator import run_navigator, WAYPOINTS_A, WAYPOINTS_B
 from TeamControl.robot.voronoi_navigator import run_voronoi_navigator
 from TeamControl.robot.voronoi_game_navigator import run_voronoi_game_navigator
+from TeamControl.robot.voronoi_pd_test_navigator import run_pd_planner_test
 from TeamControl.robot.team import run_team
 from TeamControl.robot.coop import run_coop
 
@@ -63,6 +64,7 @@ class SimEngine(QObject):
         "calibration",
         "vision_only",
         "voronoi_test",
+        "pd_test",
         "match",
         "goalie",
         "1v1",
@@ -399,6 +401,19 @@ class SimEngine(QObject):
             self.log_message.emit(
                 "[engine] Voronoi test mode — running one yellow and one blue "
                 "robot through the live Voronoi planner")
+            return procs
+
+        if mode == "pd_test":
+            # Single robot only -- live integration test for
+            # RobotMotionController's rule set (motion/controller.py),
+            # which otherwise only the PD calibration harness exercises.
+            procs.append(Process(target=run_pd_planner_test,
+                                 args=(ev, dq, wm, our_id, preset.us_yellow,
+                                       self._planner_path_q),
+                                 daemon=True))
+            self.log_message.emit(
+                "[engine] PD test mode — running one robot through the live "
+                "Voronoi planner, driven by RobotMotionController (PD)")
             return procs
 
         if mode == "match":

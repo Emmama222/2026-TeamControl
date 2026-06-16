@@ -23,20 +23,25 @@ from TeamControl.ui.theme import (FIELD_GREEN, FIELD_LINE, YELLOW_TEAM,
                                    ROLE_GOALIE, ROLE_ATTACKER, ROLE_SUPPORT,
                                    ROLE_DEFENDER, TEXT)
 from TeamControl.robot.constants import (
-    FIELD_LENGTH as DEFAULT_FIELD_LENGTH,
-    FIELD_WIDTH as DEFAULT_FIELD_WIDTH,
-    PENALTY_DEPTH as DEFAULT_PENALTY_DEPTH,
-    PENALTY_WIDTH as DEFAULT_PENALTY_WIDTH,
     CENTER_RADIUS as DEFAULT_CENTER_RADIUS,
-    GOAL_DEPTH as DEFAULT_GOAL_DEPTH,
-    GOAL_WIDTH as DEFAULT_GOAL_WIDTH,
     ROBOT_RADIUS,
     FIELD_MARGIN as DEFAULT_MARGIN,
 )
 from TeamControl.world.field_config import (
+    FIELD_LENGTH_MM as DEFAULT_FIELD_LENGTH,
+    FIELD_WIDTH_MM as DEFAULT_FIELD_WIDTH,
+    DEFENCE_X_MM as DEFAULT_PENALTY_DEPTH,
+    DEFENCE_Y_MM as _DEFAULT_PENALTY_HALF_WIDTH,
+    GOAL_DEPTH_MM as DEFAULT_GOAL_DEPTH,
+    GOAL_WIDTH_MM as DEFAULT_GOAL_WIDTH,
     DASHBOARD_BALL_PLACE_CONFIRM_SECONDS,
     DASHBOARD_BALL_PLACE_CONFIRM_TOLERANCE_MM,
 )
+
+# field_config's DEFENCE_Y_MM is a half-width; this default wants the
+# total penalty-box width (matches the SSL-Vision geometry field this
+# defaults for).
+DEFAULT_PENALTY_WIDTH = 2.0 * _DEFAULT_PENALTY_HALF_WIDTH
 
 
 class FieldCanvas(QWidget):
