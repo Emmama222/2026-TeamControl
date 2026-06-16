@@ -32,12 +32,17 @@ class GCfsm (BaseWorker):
         self.recv = GameControl(is_running=is_running)
 
     def setup(self,*args):
-        output_q, us_yellow, us_positive = args
+
+        output_q, us_yellow, us_positive, team_name = args
 
         self.output_q = output_q
         self.us_yellow = us_yellow
         self.us_positive = us_positive
         self.logger.info (f"[GCP] : Setup Complete {self.output_q=}, {us_yellow=}, {us_positive=}")
+
+        self.us_positive = us_positive
+        self.team_name = team_name
+        self.logger.info (f"[GCP] : Setup Complete {self.output_q=}, {us_yellow=}, {us_positive=}, {team_name=}")
 
     def step(self):
         # listen from GameControl socket
@@ -54,7 +59,7 @@ class GCfsm (BaseWorker):
             # check if the timestamp is before
             if new_ref_msg.packet_timestamp < self.last_ref_msg.packet_timestamp:
                 return
-
+        
         # otherwise :
         self.last_ref_msg = new_ref_msg
         # check team color if this changes, basically resets everything
@@ -66,10 +71,10 @@ class GCfsm (BaseWorker):
         self.forward_gc_status(new_ref_msg)
         # check for game event : ball placement location (for now)
         self.check_game_events(new_ref_msg)
-
-
-
-
+        
+    
+            
+    
     def check_cards(self,new_ref_msg:RefereeMessage):
         update_numbers = False
         if self.us_yellow is None or new_ref_msg.yellow is None or new_ref_msg.blue is None:
@@ -128,7 +133,7 @@ class GCfsm (BaseWorker):
 
 
     def check_color_side(self,new_ref_msg:RefereeMessage):
-        our_team_name :str = "TurtleRabbit"
+        our_team_name :str = self.team_name
         us_positive:bool = None
         us_yellow:bool = None
 
@@ -142,7 +147,7 @@ class GCfsm (BaseWorker):
         if new_ref_msg.blue_team_on_positive_half is None:
             pass
         elif new_ref_msg.blue_team_on_positive_half is True:
-            us_positive = False if  us_yellow == True else True
+            us_positive = False if us_yellow == True else True
         elif new_ref_msg.blue_team_on_positive_half is False:
             us_positive = True if  us_yellow == True else False
 
@@ -154,8 +159,6 @@ class GCfsm (BaseWorker):
             self.output_q.put_nowait(packet)
 
         elif self.us_yellow is None:
-            # warning log saying this is none
-            # raise AttributeError ("US YELLOW = NONE -> need our TeamName")
             return
 
 
@@ -163,6 +166,10 @@ class GCfsm (BaseWorker):
         self.update_state(new_ref_msg.command, new_ref_msg.stage)
         self.current_stage = new_ref_msg.stage
         self.current_command = new_ref_msg.command
+        # Forward ball placement target whenever it is present
+        if new_ref_msg.designated_position is not None:
+            pos = (new_ref_msg.designated_position.x, new_ref_msg.designated_position.y)
+            self.output_q.put_nowait((PacketType.BALL_PLACEMENT_POS, pos))
 
     def update_state(self,command,stage):
         if not isinstance(command,Command) or not isinstance(stage,Stage):
@@ -190,6 +197,10 @@ class GCfsm (BaseWorker):
 
         elif command == Command.FORCE_START:
             state = GameState.RUNNING
+        elif command == Command.PREPARE_PENALTY_YELLOW:
+            state = GameState.PREPARE_PENALTY if self.us_yellow is True else GameState.PREPARE_PENALTY_OPP
+        elif command == Command.PREPARE_PENALTY_BLUE:
+            state = GameState.PREPARE_PENALTY if self.us_yellow is False else GameState.PREPARE_PENALTY_OPP
         elif command in {Command.DIRECT_FREE_YELLOW, Command.INDIRECT_FREE_YELLOW}:
             state = GameState.OUR_FREE_KICK if self.us_yellow is True else GameState.ENEMY_FREE_KICK
         elif command in {Command.DIRECT_FREE_BLUE, Command.INDIRECT_FREE_BLUE}:
@@ -201,13 +212,11 @@ class GCfsm (BaseWorker):
                 state = GameState.OUR_KICKOFF if self.us_yellow is False else GameState.ENEMY_KICKOFF
             else :
                 state = GameState.RUNNING
-
-        elif command == Command.TIMEOUT_YELLOW :
-            state = GameState.OUR_TIME_OUT if self.us_yellow is True else GameState.ENEMY_TIME_OUT
-        elif command == Command.TIMEOUT_BLUE :
-            state = GameState.OUR_TIME_OUT if self.us_yellow is False else GameState.ENEMY_TIME_OUT
-
-        else :
+        elif command == Command.TIMEOUT_YELLOW:
+            state = GameState.HALTED
+        elif command == Command.TIMEOUT_BLUE:
+            state = GameState.HALTED
+        else:
             state = GameState.HALTED
             if stage == Stage.NORMAL_HALF_TIME or stage == Stage.EXTRA_HALF_TIME:
                 state = GameState.HALF_TIME
@@ -248,7 +257,6 @@ class GCfsm (BaseWorker):
 
     def check_game_events(self,new_ref_msg:RefereeMessage):
         game_events = new_ref_msg.game_events
-        location = None
         if len(game_events) == 0:
             return
 

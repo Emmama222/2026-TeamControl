@@ -32,6 +32,7 @@ class Config:
         self.us_yellow = raw["us_yellow"]
         self.us_positive = raw["us_positive"]
         self.send_to_grSim = raw["send_to_grSim"]
+        self.team_name = raw.get("team_name", "TurtleRabbit")
         self.record_world_snapshots = bool(raw.get("record_world_snapshots", False))
         self.record_world_snapshot_dir = raw.get(
             "record_world_snapshot_dir", "match_replays"

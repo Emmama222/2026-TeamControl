@@ -24,6 +24,29 @@ from TeamControl.robot.team import run_team
 from TeamControl.robot.coop import run_coop
 
 
+def _wait_for_vision(wm, timeout=15.0):
+    """Block until the world model has received at least one vision frame."""
+    import time
+    deadline = time.time() + timeout
+    print("[main] Waiting for first vision frame...", flush=True)
+    while time.time() < deadline:
+        frame = wm.get_latest_frame()
+        if frame is not None:
+            n_yellow = sum(1 for _ in frame.robots_yellow)
+            n_blue   = sum(1 for _ in frame.robots_blue)
+            ball     = frame.ball
+            ball_str = f"({ball.x:.0f}, {ball.y:.0f}) mm" if ball is not None else "not visible"
+            print(
+                f"[main] Vision confirmed — "
+                f"yellow robots: {n_yellow}, blue robots: {n_blue}, ball: {ball_str}",
+                flush=True,
+            )
+            return True
+        time.sleep(0.05)
+    print(f"[main] ERROR: No vision data after {timeout:.0f}s — is grSim running and broadcasting?", flush=True)
+    return False
+
+
 def main():
     freeze_support()
     parser = argparse.ArgumentParser(
@@ -51,6 +74,11 @@ def main():
             "6v6      — full 6v6 match (1 goalie + 5 field per team)"
         ),
     )
+    parser.add_argument(
+        "--skip-gc",
+        action="store_true",
+        help="Skip the Game Controller process (useful for robot testing without a live GC)",
+    )
     args = parser.parse_args()
 
     preset = Config()
@@ -69,24 +97,33 @@ def main():
 
     wm_manager = WorldModelManager()
     wm_manager.start()
-    wm = wm_manager.WorldModel()
+    wm = wm_manager.WorldModel(us_yellow=preset.us_yellow, us_positive=preset.us_positive)
 
     # ── Background processes (always needed) ──────────────────
     background = [
         Process(target=VisionProcess.run_worker,
                 args=(is_running, logger, vision_q,
-                      preset.use_grSim_vision, preset.vision[1])),
-        Process(target=GCfsm.run_worker,
-                args=(is_running, logger, gc_q,
-                      preset.us_yellow, preset.us_positive)),
+                      preset.use_grSim_vision, preset.vision[1]),
+                name="VisionProcess"),
         Process(target=WMWorker.run_worker,
                 args=(is_running, logger, wm, vision_q, gc_q,
-                      recv_q, ip_map)),
+                      recv_q, ip_map),
+                name="WMWorker"),
         Process(target=Dispatcher.run_worker,
-                args=(is_running, logger, dispatch_q, preset)),
+                args=(is_running, logger, dispatch_q, preset),
+                name="Dispatcher"),
         Process(target=RobotRecv.run_worker,
                 args=(is_running, logger, preset.robot_ip,recv_q)),
     ]
+    if not args.skip_gc:
+        background.append(Process(
+            target=GCfsm.run_worker,
+            args=(is_running, logger, gc_q,
+                  preset.us_yellow, preset.us_positive, preset.team_name),
+            name="GCfsm",
+        ))
+    else:
+        print("[main] --skip-gc: Game Controller process skipped", flush=True)
 
     # ── Mode-specific foreground processes ────────────────────
     foreground = []
@@ -167,17 +204,32 @@ def main():
             Process(target=run_team,
                     args=(is_running, dispatch_q, wm, False, 0)))
 
-    # ── Start everything ──────────────────────────────────────
+    # ── Start background, wait for vision, then start robots ──
     is_running.set()
     print(f"[main] Starting mode: {args.mode}")
 
     for p in background:
         p.start()
+
+    if not _wait_for_vision(wm, timeout=15.0):
+        print("[main] Aborting — no vision data.", flush=True)
+        is_running.clear()
+        for p in background:
+            p.join(timeout=5)
+        sys.exit(1)
+
     for p in foreground:
         p.start()
 
-    # ── Wait for exit ─────────────────────────────────────────
+    # ── Main loop: watchdog + exit prompt ─────────────────────
     while is_running.is_set():
+        # Watchdog: abort if any critical background process dies
+        for p in background:
+            if not p.is_alive():
+                print(f"[main] CRITICAL: process '{p.name}' died — shutting down", flush=True)
+                is_running.clear()
+                break
+
         try:
             print("Type 'exit' to quit: ")
             user_input = input()
@@ -189,7 +241,6 @@ def main():
             print("\nShutdown signal received...")
             is_running.clear()
 
-        print("Waiting for processes to shut down...")
         time.sleep(1)
 
     # ── Join all processes ────────────────────────────────────

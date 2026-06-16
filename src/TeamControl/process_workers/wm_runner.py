@@ -63,6 +63,10 @@ class WMWorker(BaseWorker):
             drained_gc += 1
             self.logger.info(f"[wmr] : Updating World Model Game Info {new_info[0]}")
             self.wm.update_gc_data(new_info)
+            from TeamControl.SSL.game_controller.common import PacketType
+            if new_info[0] == PacketType.NEW_STATE:
+                print(f"[wmr] → new game state: {new_info[1]}", flush=True)
+            self.wm.update_gc_data(new_info)
 
         if self.recv_q is not None:
             drained = 0
